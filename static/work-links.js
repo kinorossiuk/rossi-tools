@@ -2,6 +2,8 @@
   'use strict';
 
   const storageKey = 'rossi-tools-work-links-v1';
+  const maxLinks = 100;
+  const initialVisibleLinks = 12;
   const grid = document.querySelector('#work-link-grid');
   const dialog = document.querySelector('#work-link-dialog');
   const form = document.querySelector('#work-link-form');
@@ -10,8 +12,11 @@
   const urlInput = document.querySelector('#work-link-url');
   const error = document.querySelector('#work-link-error');
   const deleteButton = document.querySelector('#delete-work-link');
+  const summary = document.querySelector('#work-link-summary');
+  const toggleButton = document.querySelector('#toggle-work-links');
 
-  if (!grid || !dialog || !form || !idInput || !nameInput || !urlInput || !error || !deleteButton) return;
+  if (!grid || !dialog || !form || !idInput || !nameInput || !urlInput || !error
+    || !deleteButton || !summary || !toggleButton) return;
 
   const normalizedUrl = (value) => {
     const candidate = value.trim();
@@ -33,13 +38,19 @@
       return saved.filter((link) => {
         return link && typeof link.id === 'string' && typeof link.name === 'string'
           && link.name.trim() !== '' && typeof link.url === 'string' && normalizedUrl(link.url);
-      }).slice(0, 12);
+      }).slice(0, maxLinks).map((link) => ({
+        id: link.id,
+        name: link.name,
+        url: link.url,
+        favorite: link.favorite === true,
+      }));
     } catch (_) {
       return [];
     }
   };
 
   let links = readLinks();
+  let showAll = false;
 
   const createId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
@@ -55,6 +66,10 @@
 
   const render = () => {
     grid.replaceChildren();
+    summary.textContent = `${links.length} / ${maxLinks}개 · 현재 브라우저에 저장`;
+    toggleButton.hidden = links.length <= initialVisibleLinks;
+    toggleButton.setAttribute('aria-expanded', String(showAll));
+    toggleButton.textContent = showAll ? '접기' : `전체 보기 (${links.length})`;
 
     if (links.length === 0) {
       const empty = document.createElement('div');
@@ -64,7 +79,12 @@
       return;
     }
 
-    links.forEach((link) => {
+    const orderedLinks = links.map((link, index) => ({ link, index }))
+      .sort((left, right) => Number(right.link.favorite) - Number(left.link.favorite) || left.index - right.index)
+      .map(({ link }) => link);
+    const visibleLinks = showAll ? orderedLinks : orderedLinks.slice(0, initialVisibleLinks);
+
+    visibleLinks.forEach((link) => {
       const url = normalizedUrl(link.url);
       if (!url) return;
 
@@ -79,14 +99,25 @@
       const host = document.createElement('p');
       host.className = 'work-link-host';
       host.textContent = url.host;
+      const actions = document.createElement('div');
+      actions.className = 'work-link-card-actions';
+      const favorite = document.createElement('button');
+      favorite.className = 'work-link-favorite';
+      favorite.type = 'button';
+      favorite.dataset.favoriteLinkId = link.id;
+      favorite.textContent = link.favorite ? '★' : '☆';
+      favorite.setAttribute('aria-pressed', String(link.favorite));
+      favorite.setAttribute('aria-label', `${link.name} ${link.favorite ? '상단 고정 해제' : '상단에 고정'}`);
+      favorite.title = link.favorite ? '상단 고정 해제' : '상단에 고정';
       const edit = document.createElement('button');
       edit.className = 'work-link-edit';
       edit.type = 'button';
-      edit.dataset.linkId = link.id;
+      edit.dataset.editLinkId = link.id;
       edit.textContent = '설정';
       edit.setAttribute('aria-label', `${link.name} 링크 설정`);
       copy.append(name, host);
-      top.append(copy, edit);
+      actions.append(favorite, edit);
+      top.append(copy, actions);
 
       const open = document.createElement('a');
       open.className = 'work-link-open';
@@ -118,6 +149,10 @@
   };
 
   document.querySelector('#add-work-link')?.addEventListener('click', () => openDialog());
+  toggleButton.addEventListener('click', () => {
+    showAll = !showAll;
+    render();
+  });
   document.querySelectorAll('[data-dialog-close]').forEach((button) => {
     button.addEventListener('click', () => dialog.close());
   });
@@ -125,9 +160,19 @@
     if (event.target === dialog) dialog.close();
   });
   grid.addEventListener('click', (event) => {
-    const edit = event.target.closest('[data-link-id]');
+    const favorite = event.target.closest('[data-favorite-link-id]');
+    if (favorite) {
+      const link = links.find((item) => item.id === favorite.dataset.favoriteLinkId);
+      if (!link) return;
+      link.favorite = !link.favorite;
+      if (!writeLinks()) link.favorite = !link.favorite;
+      render();
+      return;
+    }
+
+    const edit = event.target.closest('[data-edit-link-id]');
     if (!edit) return;
-    const link = links.find((item) => item.id === edit.dataset.linkId);
+    const link = links.find((item) => item.id === edit.dataset.editLinkId);
     if (link) openDialog(link);
   });
 
@@ -146,15 +191,18 @@
       urlInput.focus();
       return;
     }
-    if (!idInput.value && links.length >= 12) {
-      error.textContent = '업무 도구는 최대 12개까지 등록할 수 있습니다.';
+    if (!idInput.value && links.length >= maxLinks) {
+      error.textContent = `업무 도구는 최대 ${maxLinks}개까지 등록할 수 있습니다.`;
       return;
     }
 
-    const savedLink = { id: idInput.value || createId(), name, url: url.href };
+    const savedLink = { id: idInput.value || createId(), name, url: url.href, favorite: false };
     const index = links.findIndex((link) => link.id === savedLink.id);
-    if (index >= 0) links[index] = savedLink;
-    else links.push(savedLink);
+    if (index >= 0) links[index] = { ...savedLink, favorite: links[index].favorite };
+    else {
+      links.push(savedLink);
+      showAll = links.length > initialVisibleLinks;
+    }
 
     if (!writeLinks()) return;
     render();
@@ -165,6 +213,7 @@
     const link = links.find((item) => item.id === idInput.value);
     if (!link || !window.confirm(`“${link.name}” 링크를 삭제할까요?`)) return;
     links = links.filter((item) => item.id !== link.id);
+    if (links.length <= initialVisibleLinks) showAll = false;
     if (!writeLinks()) return;
     render();
     dialog.close();

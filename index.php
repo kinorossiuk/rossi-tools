@@ -7,6 +7,7 @@ $auth = rossi_auth_gate();
 $status = (string) ($auth['status'] ?? 'setup');
 $nonce = htmlspecialchars((string) ($auth['nonce'] ?? ''), ENT_QUOTES, 'UTF-8');
 $tools = require __DIR__ . '/app/tools.php';
+$workLinksJsVersion = (string) (filemtime(__DIR__ . '/static/work-links.js') ?: '1');
 $requestedTool = trim((string) ($_GET['tool'] ?? ''));
 $currentTool = $requestedTool !== '' && isset($tools[$requestedTool]) ? $requestedTool : '';
 
@@ -57,8 +58,11 @@ function e(string $value): string
     .work-link-card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
     .work-link-card h3 { margin:.25rem 0 .45rem; font-size:1.15rem; letter-spacing:-.04em; overflow-wrap:anywhere; }
     .work-link-host { margin:0; color:var(--muted); font:.68rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; overflow-wrap:anywhere; }
-    .work-link-edit { flex:0 0 auto; border:0; background:transparent; color:var(--muted); padding:.25rem; cursor:pointer; font-size:.72rem; }
-    .work-link-edit:hover { color:var(--acid); }
+    .work-link-card-actions { flex:0 0 auto; display:flex; align-items:center; gap:.15rem; }
+    .work-link-favorite,.work-link-edit { border:0; background:transparent; color:var(--muted); padding:.25rem; cursor:pointer; }
+    .work-link-favorite { min-width:1.65rem; font-size:1.15rem; line-height:1; }
+    .work-link-favorite[aria-pressed="true"],.work-link-favorite:hover,.work-link-edit:hover { color:var(--acid); }
+    .work-link-edit { font-size:.72rem; }
     .work-link-open { margin-top:auto; display:flex; align-items:center; justify-content:space-between; border:0; background:var(--acid); color:#10120f; padding:.7rem .8rem; text-decoration:none; font-size:.76rem; font-weight:800; }
     .work-link-empty { grid-column:1/-1; padding:1.4rem; border:1px dashed var(--line); color:var(--muted); font-size:.82rem; line-height:1.6; }
     .link-dialog { width:min(92vw,520px); border:1px solid var(--line); background:var(--surface); color:var(--text); padding:0; }
@@ -111,6 +115,7 @@ function e(string $value): string
     .coming-soon { display:inline-block; margin-top:2rem; padding:.75rem 1rem; border:1px solid var(--line); color:var(--muted); font:.72rem ui-monospace,SFMono-Regular,Menlo,monospace; }
     .not-found { padding:8rem 0; }
     @media (max-width:760px) { .hero { grid-template-columns:1fr; } .tool-count { width:max-content; } .tool-grid,.work-link-grid { grid-template-columns:1fr; } .tool-card { min-height:230px; } .topbar { min-height:70px; gap:.45rem; } .global-nav { order:3; width:100%; margin:0; overflow-x:auto; padding-bottom:.65rem; } .global-nav a { flex:0 0 auto; } }
+    @media (max-width:520px) { .work-links .section-head { align-items:flex-start; flex-direction:column; gap:1rem; } .work-links .section-actions { flex-wrap:wrap; } }
   </style>
 </head>
 <body class="<?= $status === 'authenticated' ? '' : 'access-page' ?>">
@@ -149,8 +154,11 @@ function e(string $value): string
 
       <section class="work-links" aria-labelledby="work-links-title">
         <div class="section-head">
-          <div><h2 id="work-links-title">업무 도구</h2><span>현재 브라우저에만 저장됩니다</span></div>
-          <div class="section-actions"><button class="section-action" id="add-work-link" type="button">+ 링크 등록</button></div>
+          <div><h2 id="work-links-title">업무 도구</h2><span id="work-link-summary">현재 브라우저에만 저장됩니다</span></div>
+          <div class="section-actions">
+            <button class="section-action" id="toggle-work-links" type="button" aria-expanded="false" aria-controls="work-link-grid" hidden>전체 보기</button>
+            <button class="section-action" id="add-work-link" type="button">+ 링크 등록</button>
+          </div>
         </div>
         <div class="work-link-grid" id="work-link-grid" aria-live="polite"></div>
       </section>
@@ -231,7 +239,7 @@ function e(string $value): string
   </main>
 <?php endif; ?>
 <?php if ($status === 'authenticated' && $currentTool === '' && $requestedTool === ''): ?>
-  <script src="/static/work-links.js" defer></script>
+  <script src="/static/work-links.js?v=<?= e($workLinksJsVersion) ?>" defer></script>
 <?php endif; ?>
 </body>
 </html>
