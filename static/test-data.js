@@ -22,12 +22,21 @@
   const messagePrefix = root.querySelector('#message-prefix');
   const messageOutput = root.querySelector('#message-output');
   const messageCopy = root.querySelector('#message-copy');
+  const messageQrRefresh = root.querySelector('#message-qr');
   const messageClear = root.querySelector('#message-clear');
+  const messageCharacterInputs = Array.from(root.querySelectorAll('[data-message-character]'));
   const messageGraphemes = root.querySelector('#message-graphemes');
   const messageCodePoints = root.querySelector('#message-code-points');
   const messageCodeUnits = root.querySelector('#message-code-units');
   const messageBytes = root.querySelector('#message-bytes');
   const messageStatus = root.querySelector('#message-status');
+  const messageQrOutput = root.querySelector('#message-qr-output');
+  const messageQrPreview = root.querySelector('#message-qr-preview');
+  const messageQrBytes = root.querySelector('#message-qr-bytes');
+  const messageQrPosition = root.querySelector('#message-qr-position');
+  const messageQrPrevious = root.querySelector('#message-qr-previous');
+  const messageQrNext = root.querySelector('#message-qr-next');
+  const messageQrHelp = root.querySelector('#message-qr-help');
   const emojiCategory = root.querySelector('#emoji-category');
   const emojiSearch = root.querySelector('#emoji-search');
   const emojiRandomCount = root.querySelector('#emoji-random-count');
@@ -45,6 +54,8 @@
   const maxBytes = 300 * 1024 * 1024;
   const webmBitrate = 12_000_000;
   let contacts = [];
+  let messageQrParts = [];
+  let messageQrIndex = 0;
 
   const setStatus = (element, text, isError = false) => {
     element.textContent = text;
@@ -141,6 +152,15 @@
       return value[0] % length;
     }
     return Math.floor(Math.random() * length);
+  };
+
+  const shuffled = (values) => {
+    const output = [...values];
+    for (let index = output.length - 1; index > 0; index -= 1) {
+      const swapIndex = randomIndex(index + 1);
+      [output[index], output[swapIndex]] = [output[swapIndex], output[index]];
+    }
+    return output;
   };
 
   const patternQueues = new Map();
@@ -628,6 +648,96 @@
   };
   const describeMessageStats = (stats) => `화면 ${stats.graphemes.toLocaleString('ko-KR')}자 · 코드 포인트 ${stats.codePoints.toLocaleString('ko-KR')}개 · UTF-16 ${stats.codeUnits.toLocaleString('ko-KR')} · UTF-8 ${stats.bytes.toLocaleString('ko-KR')} bytes`;
 
+  const qrPayloadByteLimit = 2600;
+  const qrContentByteLimit = qrPayloadByteLimit - 48;
+  const qrQuietZone = 4;
+  const qrSvgNamespace = 'http://www.w3.org/2000/svg';
+
+  const clearMessageQr = () => {
+    messageQrParts = [];
+    messageQrIndex = 0;
+    messageQrOutput.hidden = true;
+    messageQrPreview.replaceChildren(Object.assign(document.createElement('span'), { textContent: 'QR' }));
+  };
+
+  const splitMessageForQr = (value) => {
+    const parts = [];
+    let part = [];
+    let partBytes = 0;
+    messageSegments(value).forEach((segment) => {
+      const segmentBytes = encoder.encode(segment).length;
+      if (part.length && partBytes + segmentBytes > qrContentByteLimit) {
+        parts.push(part.join(''));
+        part = [];
+        partBytes = 0;
+      }
+      if (segmentBytes > qrContentByteLimit) throw new Error('QR 한 조각에 담을 수 없는 긴 결합 문자입니다. 해당 문자를 줄여 주세요.');
+      part.push(segment);
+      partBytes += segmentBytes;
+    });
+    if (part.length) parts.push(part.join(''));
+    return parts;
+  };
+
+  const makeMessageQrSvg = (value, index, total) => {
+    window.qrcode.stringToBytes = window.qrcode.stringToBytesFuncs['UTF-8'];
+    const qr = window.qrcode(0, 'L');
+    qr.addData(value, 'Byte');
+    qr.make();
+    const count = qr.getModuleCount();
+    const totalModules = count + qrQuietZone * 2;
+    const svg = document.createElementNS(qrSvgNamespace, 'svg');
+    svg.setAttribute('xmlns', qrSvgNamespace);
+    svg.setAttribute('viewBox', `0 0 ${totalModules} ${totalModules}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', total > 1 ? `생성 문자 QR ${index + 1}/${total}` : '생성 문자 QR');
+    svg.setAttribute('shape-rendering', 'crispEdges');
+    const background = document.createElementNS(qrSvgNamespace, 'rect');
+    background.setAttribute('width', String(totalModules));
+    background.setAttribute('height', String(totalModules));
+    background.setAttribute('fill', '#ffffff');
+    svg.append(background);
+    let pathData = '';
+    for (let row = 0; row < count; row += 1) {
+      for (let column = 0; column < count; column += 1) {
+        if (qr.isDark(row, column)) pathData += `M${column + qrQuietZone} ${row + qrQuietZone}h1v1h-1z`;
+      }
+    }
+    const modules = document.createElementNS(qrSvgNamespace, 'path');
+    modules.setAttribute('fill', '#111310');
+    modules.setAttribute('d', pathData);
+    svg.append(modules);
+    return svg;
+  };
+
+  const showMessageQrPart = (index) => {
+    if (messageQrParts.length === 0) return;
+    messageQrIndex = Math.max(0, Math.min(index, messageQrParts.length - 1));
+    const part = messageQrParts[messageQrIndex];
+    const svg = makeMessageQrSvg(part, messageQrIndex, messageQrParts.length);
+    messageQrPreview.replaceChildren(svg);
+    messageQrPosition.textContent = `${(messageQrIndex + 1).toLocaleString('ko-KR')} / ${messageQrParts.length.toLocaleString('ko-KR')}`;
+    messageQrBytes.textContent = `현재 QR · ${encoder.encode(part).length.toLocaleString('ko-KR')} bytes`;
+    messageQrPrevious.disabled = messageQrIndex === 0;
+    messageQrNext.disabled = messageQrIndex === messageQrParts.length - 1;
+  };
+
+  const prepareMessageQr = () => {
+    const value = messageOutput.value;
+    if (!value) throw new Error('먼저 문자를 만들어 주세요.');
+    if (typeof window.qrcode !== 'function') throw new Error('QR 생성기를 불러오지 못했습니다. 페이지를 새로고침해 주세요.');
+    const totalBytes = encoder.encode(value).length;
+    const contents = totalBytes <= qrPayloadByteLimit ? [value] : splitMessageForQr(value);
+    messageQrParts = contents.map((part, index) => contents.length === 1 ? part : `[ROSSI TEST ${index + 1}/${contents.length}]\n${part}`);
+    messageQrIndex = 0;
+    messageQrOutput.hidden = false;
+    showMessageQrPart(0);
+    messageQrHelp.textContent = messageQrParts.length === 1
+      ? '휴대폰 카메라로 스캔하면 생성 문자를 바로 확인할 수 있습니다.'
+      : `전체 문자를 ${messageQrParts.length.toLocaleString('ko-KR')}개로 나눴습니다. 각 스캔 결과의 [ROSSI TEST n/${messageQrParts.length}] 첫 줄을 빼고 번호순으로 이어 붙이세요.`;
+    return messageQrParts.length;
+  };
+
   const emojiGroups = {
     smileys: [
       ['😀', '활짝 웃는 얼굴', 'smile grin happy'], ['😃', '큰 눈으로 웃는 얼굴', 'smile happy'], ['😂', '기쁨의 눈물', 'laugh tears'], ['🥰', '하트와 웃는 얼굴', 'love heart'],
@@ -688,6 +798,8 @@
     const end = messageOutput.selectionEnd ?? start;
     messageOutput.setRangeText(text, start, end, 'end');
     const stats = updateMessageMetrics();
+    clearMessageQr();
+    messageQrRefresh.disabled = false;
     messageOutput.focus();
     return stats;
   };
@@ -720,17 +832,34 @@
 
   const makeMessage = () => {
     const count = Number(messageCount.value);
-    if (!Number.isInteger(count) || count < 1 || count > 2000) throw new Error('문자 수는 1~2,000자로 입력해 주세요.');
+    if (!Number.isInteger(count) || count < 1 || count > 100000) throw new Error('문자 수는 1~100,000자로 입력해 주세요.');
+    const selectedTypes = messageCharacterInputs.filter((input) => input.checked).map((input) => input.value);
+    if (selectedTypes.length === 0) throw new Error('문자 구성을 하나 이상 선택해 주세요.');
+    const characterSets = {
+      korean: messageSegments('가나다라마바사아자차카타파하테스트문자경계값'),
+      english: messageSegments('ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'),
+      number: messageSegments('0123456789'),
+      symbol: messageSegments('!@#$%^&*()-_=+[]{};:,.?/|~'),
+      emoji: emojiItems.map((item) => item.value),
+    };
     const output = messageSegments(messagePrefix.value);
-    const filler = messageSegments('가나다라마바사아자차카타파하 0123456789');
-    for (let index = 0; output.length < count; index += 1) output.push(filler[index % filler.length]);
+    while (output.length < count) {
+      shuffled(selectedTypes).forEach((type) => {
+        if (output.length < count) {
+          const characters = characterSets[type];
+          output.push(characters[randomIndex(characters.length)]);
+        }
+      });
+    }
     return output.slice(0, count).join('');
   };
 
   messagePreset.addEventListener('change', () => { if (messagePreset.value !== 'custom') messageCount.value = messagePreset.value; });
-  messageCount.addEventListener('input', () => { messagePreset.value = ['499', '500', '501'].includes(messageCount.value) ? messageCount.value : 'custom'; });
+  messageCount.addEventListener('input', () => { messagePreset.value = ['499', '500', '501', '3999', '4000', '4001', '10000'].includes(messageCount.value) ? messageCount.value : 'custom'; });
   messageOutput.addEventListener('input', () => {
     const stats = updateMessageMetrics();
+    clearMessageQr();
+    messageQrRefresh.disabled = !messageOutput.value;
     setStatus(messageStatus, messageOutput.value ? describeMessageStats(stats) : '입력할 내용을 기다리고 있습니다.');
   });
   messageForm.addEventListener('submit', (event) => {
@@ -739,7 +868,9 @@
       const value = makeMessage();
       messageOutput.value = value;
       const stats = updateMessageMetrics();
-      setStatus(messageStatus, `목표 화면 글자 수에 맞춰 만들었습니다. ${describeMessageStats(stats)}`);
+      messageQrRefresh.disabled = false;
+      const qrCount = prepareMessageQr();
+      setStatus(messageStatus, `선택한 문자 구성을 섞어 목표 화면 글자 수에 맞췄습니다. QR ${qrCount.toLocaleString('ko-KR')}개를 만들었습니다. ${describeMessageStats(stats)}`);
     } catch (error) { setStatus(messageStatus, error instanceof Error ? error.message : '문자를 만들지 못했습니다.', true); }
   });
   messageCopy.addEventListener('click', async () => {
@@ -747,9 +878,19 @@
     try { await navigator.clipboard.writeText(messageOutput.value); setStatus(messageStatus, '클립보드에 복사했습니다.'); }
     catch (_) { messageOutput.select(); document.execCommand('copy'); setStatus(messageStatus, '클립보드에 복사했습니다.'); }
   });
+  messageQrRefresh.addEventListener('click', () => {
+    try {
+      const qrCount = prepareMessageQr();
+      setStatus(messageStatus, `현재 입력 내용으로 QR ${qrCount.toLocaleString('ko-KR')}개를 만들었습니다.`);
+    } catch (error) { setStatus(messageStatus, error instanceof Error ? error.message : 'QR을 만들지 못했습니다.', true); }
+  });
+  messageQrPrevious.addEventListener('click', () => showMessageQrPart(messageQrIndex - 1));
+  messageQrNext.addEventListener('click', () => showMessageQrPart(messageQrIndex + 1));
   messageClear.addEventListener('click', () => {
     messageOutput.value = '';
     updateMessageMetrics();
+    clearMessageQr();
+    messageQrRefresh.disabled = true;
     messageOutput.focus();
     setStatus(messageStatus, '입력 내용을 초기화했습니다.');
   });

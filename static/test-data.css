@@ -27,6 +27,25 @@
 .message-metrics div{display:grid;gap:.35rem;min-width:0;padding:.85rem;background:#0c0e0c}
 .message-metrics span{color:var(--muted);font:.68rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
 .message-metrics strong{overflow-wrap:anywhere;color:var(--acid);font:750 1.05rem/1.2 ui-monospace,SFMono-Regular,Menlo,monospace}
+.message-character-mix{min-width:0;margin:0;padding:1rem;border:1px solid var(--line)}
+.message-character-mix legend{padding:0 .45rem;color:var(--acid);font-size:.8rem;font-weight:750}
+.message-character-options{display:flex;flex-wrap:wrap;gap:.65rem 1rem}
+.message-character-options label{display:flex;grid-template-columns:none;gap:.45rem;align-items:center;color:var(--text);cursor:pointer}
+.message-character-options input{width:auto;accent-color:var(--acid)}
+.message-character-mix .test-hint{margin:.8rem 0 0}
+.message-qr-output{padding:1rem;border:1px solid var(--line);background:#0c0e0c}
+.message-qr-heading{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1rem}
+.message-qr-heading .kicker{margin:0 0 .25rem;font-size:.62rem}
+.message-qr-heading h2{margin:0;color:var(--text);font-size:1rem}
+.message-qr-heading>span{color:var(--muted);font:.7rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right}
+.message-qr-preview{display:grid;width:min(100%,560px);aspect-ratio:1;margin:0 auto;padding:.8rem;place-items:center;background:#fff}
+.message-qr-preview>span{color:#50534f;font:750 1rem ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em}
+.message-qr-preview svg{display:block;width:100%;height:100%}
+.message-qr-navigation{display:flex;justify-content:center;align-items:center;gap:.75rem;margin-top:1rem}
+.message-qr-navigation .ghost{margin:0;padding:.6rem .75rem}
+.message-qr-navigation .ghost:disabled{cursor:not-allowed;opacity:.4}
+.message-qr-navigation strong{min-width:5rem;color:var(--acid);font:.8rem ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center}
+.message-qr-output>.test-hint{margin:.9rem 0 0;text-align:center}
 .emoji-generator{min-width:0;margin:.35rem 0 0;padding:1rem;border:1px solid var(--line)}
 .emoji-generator legend{padding:0 .45rem;color:var(--acid);font-size:.8rem;font-weight:750}
 .emoji-controls{display:grid;grid-template-columns:1fr 1.35fr .8fr auto;gap:.75rem;align-items:end}

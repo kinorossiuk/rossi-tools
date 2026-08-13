@@ -52,9 +52,20 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
   <section class="test-panel" id="message-panel" role="tabpanel" aria-labelledby="message-tab" data-panel="message" hidden>
     <form class="test-form" id="test-message-form">
       <label>목표 화면 글자 수
-        <div class="size-input"><input id="message-count" type="number" min="1" max="2000" value="500" required inputmode="numeric"><select id="message-preset"><option value="custom">직접 입력</option><option value="499">499자 이하</option><option value="500">정확히 500자</option><option value="501">501자 이상</option></select></div>
+        <div class="size-input"><input id="message-count" type="number" min="1" max="100000" value="500" required inputmode="numeric"><select id="message-preset"><option value="custom">직접 입력</option><option value="499">499자 이하</option><option value="500">정확히 500자</option><option value="501">501자 이상</option><option value="3999">3,999자 이하</option><option value="4000">정확히 4,000자</option><option value="4001">4,001자 이상</option><option value="10000">정확히 10,000자</option></select></div>
       </label>
       <label>앞에 붙일 문구 <input id="message-prefix" value="테스트 문자 "></label>
+      <fieldset class="message-character-mix wide-field">
+        <legend>문자 구성</legend>
+        <div class="message-character-options">
+          <label><input type="checkbox" value="korean" data-message-character checked> 한글</label>
+          <label><input type="checkbox" value="english" data-message-character checked> 영문</label>
+          <label><input type="checkbox" value="number" data-message-character checked> 숫자</label>
+          <label><input type="checkbox" value="symbol" data-message-character checked> 특수문자</label>
+          <label><input type="checkbox" value="emoji" data-message-character checked> 이모지</label>
+        </div>
+        <p class="test-hint">선택한 종류가 한쪽에 치우치지 않도록 고르게 섞어 정확한 화면 글자 수로 만듭니다.</p>
+      </fieldset>
       <label class="wide-field">직접 입력 또는 생성 결과 <textarea id="message-output" rows="8" spellcheck="false" placeholder="글자 수를 확인할 내용을 입력하거나 아래에서 이모지를 넣으세요."></textarea></label>
       <div class="message-metrics wide-field" aria-label="입력 내용 통계">
         <div><span>화면 글자</span><strong id="message-graphemes">0</strong></div>
@@ -62,7 +73,21 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
         <div><span>UTF-16 문자열 길이</span><strong id="message-code-units">0</strong></div>
         <div><span>UTF-8 바이트</span><strong id="message-bytes">0</strong></div>
       </div>
-      <div class="test-actions wide-field"><button class="primary" type="submit">문자 만들기</button><button class="ghost" id="message-copy" type="button">복사</button><button class="ghost" id="message-clear" type="button">초기화</button></div>
+      <div class="test-actions wide-field"><button class="primary" type="submit">문자 만들기</button><button class="ghost" id="message-copy" type="button">복사</button><button class="ghost" id="message-qr" type="button" disabled>QR 새로고침</button><button class="ghost" id="message-clear" type="button">초기화</button></div>
+
+      <section class="message-qr-output wide-field" id="message-qr-output" aria-labelledby="message-qr-title" hidden>
+        <div class="message-qr-heading">
+          <div><p class="kicker">SCAN / LOCAL</p><h2 id="message-qr-title">생성 문자 QR</h2></div>
+          <span id="message-qr-bytes"></span>
+        </div>
+        <div class="message-qr-preview" id="message-qr-preview" aria-live="polite"><span>QR</span></div>
+        <div class="message-qr-navigation" aria-label="분할 QR 이동">
+          <button class="ghost" id="message-qr-previous" type="button">이전 QR</button>
+          <strong id="message-qr-position">1 / 1</strong>
+          <button class="ghost" id="message-qr-next" type="button">다음 QR</button>
+        </div>
+        <p class="test-hint" id="message-qr-help">휴대폰 카메라로 QR을 스캔하세요.</p>
+      </section>
 
       <fieldset class="emoji-generator wide-field">
         <legend>기기 기본 이모지 테스트</legend>
@@ -96,4 +121,5 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
     </form>
   </section>
 </section>
+<script defer src="/static/vendor/qrcode-generator.js"></script>
 <script defer src="/static/test-data.js?v=<?= htmlspecialchars($testDataJsVersion, ENT_QUOTES, 'UTF-8') ?>"></script>
