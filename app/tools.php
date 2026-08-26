@@ -9,6 +9,13 @@ return [
         'path' => '/tools/qr/',
         'status' => '사용 가능',
     ],
+    'url-shortener' => [
+        'name' => 'URL 압축기',
+        'description' => '긴 URL을 짧은 rossiuk.xyz 주소로 압축하고 바로 복사합니다.',
+        'category' => '생성',
+        'path' => '/tools/url-shortener/',
+        'status' => '서버 저장',
+    ],
     'sms' => [
         'name' => 'SMS 예약 발송',
         'description' => 'SOLAPI로 개인 알림을 예약하고 발송 상태를 확인합니다.',

@@ -53,6 +53,9 @@ function e(string $value): string
     .section-actions { display:flex; align-items:center; gap:.65rem; }
     .section-action { border:1px solid var(--line); background:var(--surface); color:var(--text); padding:.65rem .85rem; cursor:pointer; font-size:.75rem; font-weight:750; }
     .section-action:hover { border-color:var(--acid); color:var(--acid); }
+    .work-link-filter-row { display:flex; align-items:center; gap:.45rem; margin:0 0 1rem; overflow-x:auto; padding-bottom:.2rem; }
+    .work-link-filter { flex:0 0 auto; border:1px solid var(--line); background:transparent; color:var(--muted); padding:.5rem .7rem; cursor:pointer; font-size:.72rem; }
+    .work-link-filter:hover,.work-link-filter[aria-pressed="true"] { border-color:var(--acid); color:var(--acid); background:var(--surface); }
     .work-link-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1rem; }
     .work-link-card { min-height:150px; display:flex; flex-direction:column; padding:1.15rem; border:1px solid var(--line); background:var(--surface); }
     .work-link-card-top { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
@@ -72,8 +75,8 @@ function e(string $value): string
     .link-form-head h2 { margin:0; font-size:1rem; }
     .dialog-close { border:0; background:transparent; color:var(--muted); padding:.3rem; cursor:pointer; font-size:1.15rem; }
     .link-field { display:block; margin-bottom:1rem; color:var(--muted); font-size:.78rem; }
-    .link-field input { width:100%; margin-top:.5rem; border:1px solid var(--line); background:#0c0e0c; color:var(--text); padding:.8rem .9rem; outline:none; }
-    .link-field input:focus { border-color:var(--acid); }
+    .link-field input,.link-field select { width:100%; margin-top:.5rem; border:1px solid var(--line); background:#0c0e0c; color:var(--text); padding:.8rem .9rem; outline:none; }
+    .link-field input:focus,.link-field select:focus { border-color:var(--acid); }
     .link-form-error { min-height:1.25rem; margin:.15rem 0 .65rem; color:var(--danger); font-size:.76rem; }
     .link-form-actions { display:flex; align-items:center; justify-content:flex-end; gap:.6rem; }
     .link-delete { margin-right:auto; border:0; background:transparent; color:var(--danger); padding:.7rem 0; cursor:pointer; }
@@ -125,6 +128,7 @@ function e(string $value): string
       <a class="brand" href="/">ROSSI<span>•</span>TOOLS</a>
       <nav class="global-nav" aria-label="도구 바로가기">
         <a href="/tools/qr/"<?= $currentTool === 'qr' ? ' aria-current="page"' : '' ?>>QR</a>
+        <a href="/tools/url-shortener/"<?= $currentTool === 'url-shortener' ? ' aria-current="page"' : '' ?>>URL</a>
         <a href="/tools/sms/"<?= $currentTool === 'sms' ? ' aria-current="page"' : '' ?>>SMS</a>
         <a href="/tools/test-data/"<?= $currentTool === 'test-data' ? ' aria-current="page"' : '' ?>>Test Data</a>
         <a href="/tools/json/"<?= $currentTool === 'json' ? ' aria-current="page"' : '' ?>>JSON</a>
@@ -156,10 +160,12 @@ function e(string $value): string
         <div class="section-head">
           <div><h2 id="work-links-title">업무 도구</h2><span id="work-link-summary">현재 브라우저에만 저장됩니다</span></div>
           <div class="section-actions">
-            <button class="section-action" id="toggle-work-links" type="button" aria-expanded="false" aria-controls="work-link-grid" hidden>전체 보기</button>
+            <button class="section-action" id="edit-work-filter" type="button" hidden>필터 편집</button>
+            <button class="section-action" id="add-work-filter" type="button">+ 필터</button>
             <button class="section-action" id="add-work-link" type="button">+ 링크 등록</button>
           </div>
         </div>
+        <div class="work-link-filter-row" id="work-link-filters" aria-label="업무 링크 필터"></div>
         <div class="work-link-grid" id="work-link-grid" aria-live="polite"></div>
       </section>
 
@@ -175,6 +181,9 @@ function e(string $value): string
           </label>
           <label class="link-field" for="work-link-url">하이퍼링크
             <input id="work-link-url" type="url" required maxlength="2048" inputmode="url" autocomplete="off" placeholder="https://intranet.example.com">
+          </label>
+          <label class="link-field" for="work-link-filter">필터
+            <select id="work-link-filter"><option value="">필터 없음</option></select>
           </label>
           <p class="link-form-error" id="work-link-error" role="alert"></p>
           <div class="link-form-actions">
@@ -195,6 +204,7 @@ function e(string $value): string
                   <?php if ($slug === 'qr'): ?><svg viewBox="0 0 32 32"><path d="M3 3h10v10H3V3Zm3 3v4h4V6H6Zm13-3h10v10H19V3Zm3 3v4h4V6h-4ZM3 19h10v10H3V19Zm3 3v4h4v-4H6Zm13-3h4v4h-4v-4Zm6 0h4v4h-4v-4Zm-6 6h4v4h-4v-4Zm6 0h4v4h-4v-4Z"/></svg><?php elseif ($slug === 'sms'): ?><svg viewBox="0 0 32 32"><path d="M3 6h26v20H3V6Zm3 3.3V23h20V9.3L16 17 6 9.3ZM7.5 9h17L16 15.5 7.5 9Z"/></svg><?php elseif ($slug === 'test-data'): ?><svg viewBox="0 0 32 32"><path d="M6 3h14l6 6v20H6V3Zm12 2.8V11h5.2L18 5.8ZM10 15h12v2H10v-2Zm0 5h12v2H10v-2Zm0 5h8v2h-8v-2Z"/></svg><?php elseif ($slug === 'json'): ?><svg viewBox="0 0 32 32"><path d="M11 3v4H8v7c0 1.4-.7 2.4-2 3 1.3.6 2 1.6 2 3v7h3v4H7c-2 0-3-1-3-3v-7c0-1.3-.7-2-2-2v-4c1.3 0 2-.7 2-2V6c0-2 1-3 3-3h4Zm10 0h4c2 0 3 1 3 3v7c0 1.3.7 2 2 2v4c-1.3 0-2 .7-2 2v7c0 2-1 3-3 3h-4v-4h3v-7c0-1.4.7-2.4 2-3-1.3-.6-2-1.6-2-3V7h-3V3Z"/></svg><?php endif; ?>
                   <?php if ($slug === 'temporary-note'): ?>✎<?php endif; ?>
                   <?php if ($slug === 'timer'): ?>⏱<?php endif; ?>
+                  <?php if ($slug === 'url-shortener'): ?><svg viewBox="0 0 32 32"><path d="M12.4 20.6 9.6 23.4a4 4 0 0 1-5.7-5.7l5.6-5.6a4 4 0 0 1 5.7 0l1.4 1.4 2.8-2.8-1.4-1.4a8 8 0 0 0-11.3 0l-5.6 5.6a8 8 0 0 0 11.3 11.3l2.8-2.8-2.8-2.8Zm7.2-9.2 2.8-2.8a4 4 0 1 1 5.7 5.7l-5.6 5.6a4 4 0 0 1-5.7 0l-1.4-1.4-2.8 2.8 1.4 1.4a8 8 0 0 0 11.3 0l5.6-5.6A8 8 0 0 0 19.6 5.8l-2.8 2.8 2.8 2.8Zm-8.3 7.1 7.2-7.2 2.2 2.2-7.2 7.2-2.2-2.2Z"/></svg><?php endif; ?>
                 </div>
                 <span class="badge"><?= e($tool['status']) ?></span>
               </div>
