@@ -17,7 +17,9 @@
   const summary = document.querySelector('#work-link-summary');
   const addFilterButton = document.querySelector('#add-work-filter');
   const editFilterButton = document.querySelector('#edit-work-filter');
-  if (!grid || !filtersRoot || !dialog || !form || !idInput || !nameInput || !urlInput || !filterInput || !error || !deleteButton || !summary || !addFilterButton || !editFilterButton) return;
+  const movePreviousButton = document.querySelector('#move-work-filter-previous');
+  const moveNextButton = document.querySelector('#move-work-filter-next');
+  if (!grid || !filtersRoot || !dialog || !form || !idInput || !nameInput || !urlInput || !filterInput || !error || !deleteButton || !summary || !addFilterButton || !editFilterButton || !movePreviousButton || !moveNextButton) return;
 
   const normaliseUrl = (value) => {
     const candidate = value.trim(); if (!candidate) return null;
@@ -45,7 +47,13 @@
   const populateFilterOptions = (selected = '') => { filterInput.replaceChildren(); const none = document.createElement('option'); none.value = ''; none.textContent = '필터 없음'; filterInput.append(none); state.filters.forEach((filter) => { const option = document.createElement('option'); option.value = filter.id; option.textContent = filter.name; filterInput.append(option); }); filterInput.value = state.filters.some((filter) => filter.id === selected) ? selected : ''; };
   const renderFilters = () => {
     filtersRoot.replaceChildren(); [{ id: 'all', name: '전체' }, ...state.filters].forEach((filter) => { const button = document.createElement('button'); button.type = 'button'; button.className = 'work-link-filter'; button.textContent = filter.name; button.setAttribute('aria-pressed', String(selectedFilterId === filter.id)); button.addEventListener('click', () => { selectedFilterId = filter.id; render(); }); filtersRoot.append(button); });
-    editFilterButton.hidden = selectedFilterId === 'all';
+    const index = state.filters.findIndex((filter) => filter.id === selectedFilterId);
+    const customFilterSelected = index >= 0;
+    editFilterButton.hidden = !customFilterSelected;
+    movePreviousButton.hidden = !customFilterSelected;
+    moveNextButton.hidden = !customFilterSelected;
+    movePreviousButton.disabled = index <= 0;
+    moveNextButton.disabled = index < 0 || index >= state.filters.length - 1;
   };
   const render = () => {
     renderFilters(); grid.replaceChildren();
@@ -67,6 +75,9 @@
   dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   grid.addEventListener('click', (event) => { const favorite = event.target.closest('[data-favorite-link-id]'); if (favorite) { const link = state.links.find((item) => item.id === favorite.dataset.favoriteLinkId); if (!link) return; link.favorite = !link.favorite; if (!writeState()) link.favorite = !link.favorite; render(); return; } const edit = event.target.closest('[data-edit-link-id]'); if (!edit) return; const link = state.links.find((item) => item.id === edit.dataset.editLinkId); if (link) openDialog(link); });
   addFilterButton.addEventListener('click', () => { const value = window.prompt('새 필터 이름을 입력해 주세요. 예: 업무, 개발, 쇼핑'); if (value === null) return; const name = cleanName(value, 30); if (!name) return; if (state.filters.some((filter) => filter.name.toLocaleLowerCase('ko-KR') === name.toLocaleLowerCase('ko-KR'))) { window.alert('같은 이름의 필터가 이미 있습니다.'); return; } if (state.filters.length >= maxFilters) { window.alert(`필터는 최대 ${maxFilters}개까지 만들 수 있습니다.`); return; } const filter = { id: createId(), name }; state.filters.push(filter); if (!writeState()) { state.filters.pop(); return; } selectedFilterId = filter.id; render(); });
+  const moveSelectedFilter = (offset) => { const index = state.filters.findIndex((filter) => filter.id === selectedFilterId); const target = index + offset; if (index < 0 || target < 0 || target >= state.filters.length) return; [state.filters[index], state.filters[target]] = [state.filters[target], state.filters[index]]; if (writeState()) render(); else [state.filters[index], state.filters[target]] = [state.filters[target], state.filters[index]]; };
+  movePreviousButton.addEventListener('click', () => moveSelectedFilter(-1));
+  moveNextButton.addEventListener('click', () => moveSelectedFilter(1));
   editFilterButton.addEventListener('click', () => { const filter = selectedFilter(); if (!filter) return; const value = window.prompt('필터 이름을 수정하세요. 빈 값으로 저장하면 필터를 삭제합니다.', filter.name); if (value === null) return; const name = cleanName(value, 30); if (!name) { if (!window.confirm(`“${filter.name}” 필터를 삭제할까요? 링크는 삭제되지 않고 전체 목록에 남습니다.`)) return; state.links.forEach((link) => { if (link.filterId === filter.id) link.filterId = ''; }); state.filters = state.filters.filter((item) => item.id !== filter.id); selectedFilterId = 'all'; writeState(); render(); return; } if (state.filters.some((item) => item.id !== filter.id && item.name.toLocaleLowerCase('ko-KR') === name.toLocaleLowerCase('ko-KR'))) { window.alert('같은 이름의 필터가 이미 있습니다.'); return; } filter.name = name; if (writeState()) render(); });
   form.addEventListener('submit', (event) => { event.preventDefault(); const name = cleanName(nameInput.value, 50); const url = normaliseUrl(urlInput.value); if (!name) { error.textContent = '도구 이름을 입력해 주세요.'; nameInput.focus(); return; } if (!url) { error.textContent = 'http:// 또는 https://로 시작하는 올바른 주소를 입력해 주세요.'; urlInput.focus(); return; } if (!idInput.value && state.links.length >= maxLinks) { error.textContent = `업무 도구는 최대 ${maxLinks}개까지 등록할 수 있습니다.`; return; } const filterId = state.filters.some((filter) => filter.id === filterInput.value) ? filterInput.value : ''; const savedLink = { id: idInput.value || createId(), name, url: url.href, favorite: false, filterId }; const index = state.links.findIndex((link) => link.id === savedLink.id); if (index >= 0) state.links[index] = { ...savedLink, favorite: state.links[index].favorite }; else state.links.push(savedLink); if (!writeState()) return; render(); dialog.close(); });
   deleteButton.addEventListener('click', () => { const link = state.links.find((item) => item.id === idInput.value); if (!link || !window.confirm(`“${link.name}” 링크를 삭제할까요?`)) return; state.links = state.links.filter((item) => item.id !== link.id); if (!writeState()) return; render(); dialog.close(); });

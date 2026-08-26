@@ -24,7 +24,7 @@ if (($auth['status'] ?? '') !== 'authenticated') {
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 try {
     if ($method === 'GET') {
-        rossi_short_links_respond(['links' => rossi_short_links_list()]);
+        rossi_short_links_respond(['links' => rossi_short_links_list(), 'bitly_configured' => rossi_bitly_is_configured()]);
     }
     if ($method !== 'POST') {
         header('Allow: GET, POST');
@@ -45,7 +45,7 @@ try {
         rossi_short_links_respond($result, $result['created'] ? 201 : 200);
     }
     if ($action === 'delete') {
-        if (!rossi_short_links_delete((string) ($request['code'] ?? ''))) {
+        if (!rossi_short_links_delete((string) ($request['id'] ?? ''))) {
             rossi_short_links_respond(['error' => '이미 삭제되었거나 존재하지 않는 단축 URL입니다.'], 404);
         }
         rossi_short_links_respond(['deleted' => true]);

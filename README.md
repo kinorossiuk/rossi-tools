@@ -9,7 +9,7 @@ PHP 웹호스팅에서 실행되며 QA 실무를 위해 직접 개발한 개인 
 
 - **업무 링크**: 현재 브라우저에 링크를 최대 100개 저장하고, 전체·사용자 필터로 나누어 관리합니다.
 - **QR 코드 생성기**: URL 또는 텍스트를 QR 코드로 만들고 SVG·PNG로 저장합니다.
-- **URL 압축기**: 긴 URL을 `rossiuk.xyz/s/…` 형식의 짧은 주소로 만들고 복사·관리합니다.
+- **URL 압축기**: 긴 URL을 Bitly의 `bit.ly/…` 형식 짧은 주소로 만들고 복사·관리합니다.
 - **SMS 예약 발송**: SOLAPI로 개인 알림을 예약하고 발송 상태를 확인합니다.
 - **테스트 데이터 생성기**: 용량별 파일, 문자·이모지 경계값, 더미 연락처를 만듭니다.
 - **JSON 뷰어**: JSON 문법을 검사하고 보기 좋게 정리하거나 한 줄로 압축합니다.
@@ -90,14 +90,20 @@ QR 인코딩에는 `qrcode-generator` v2.0.4(MIT)를 `static/vendor/`에 포함�
 ## URL 압축기
 
 `/tools/url-shortener/`에서 긴 URL을 입력하고 **URL 압축**을 누르면
-`https://rossiuk.xyz/s/XXXXXXX` 형식의 짧은 주소를 생성합니다.
+`https://bit.ly/XXXXXXX` 형식의 짧은 주소를 생성합니다.
 
 - `http` 또는 `https` URL만 허용하며, 프로토콜을 생략하면 `https://`를 붙임
-- 같은 원본 URL은 기존 단축 주소를 다시 사용해 중복 생성을 방지
-- 생성한 주소를 한 번에 복사하고, 저장 목록에서 열기·삭제 가능
-- 생성·목록·삭제는 로그인한 사용자만 가능하고 단축 주소 이동은 공개
-- 원본 URL과 생성 시각은 웹 루트 밖 `~/.rossi-tools/short-links.json`에 저장
-- 비밀번호, 인증 토큰, 개인정보가 포함된 URL은 단축하지 않는 것을 권장
+- Bitly API로 발급하며, 생성·목록·삭제는 로그인한 사용자만 가능
+- API 토큰은 웹 루트 밖 `~/.rossi-tools/bitly.php`에 소유자 전용 권한으로 저장
+- 원본 URL과 Bitly 링크 메타데이터는 웹 루트 밖 `~/.rossi-tools/short-links.json`에 저장
+- `token`, `key`, `secret`, `password`, `session`, `code` 등 민감 쿼리값이 포함된 URL은 생성 차단
+- Bitly 주소는 공개 공유용이므로 개인정보·인증정보가 든 URL은 사용할 수 없음
+
+배포 후 cPanel 터미널에서 Bitly API 토큰을 한 번 설정합니다. 토큰은 화면에 보이지 않으며 Git에 포함되지 않습니다.
+
+```bash
+php /home/hkz3dtrsnk2pyzow/repositories/wp_sms_api_reminder/bin/set-bitly-token.php
+```
 
 ## 업무 링크 필터
 
@@ -106,6 +112,7 @@ QR 인코딩에는 `qrcode-generator` v2.0.4(MIT)를 `static/vendor/`에 포함�
 - `전체`는 등록한 모든 링크를 표시
 - `+ 필터`에서 업무·개발·쇼핑처럼 원하는 분류를 직접 입력
 - 링크 등록·수정 시 하나의 필터를 지정하고, 선택한 필터에서만 표시
+- 선택한 필터는 `← 이전`, `다음 →`으로 순서를 바꿀 수 있으며 `전체`는 항상 첫 번째로 고정
 - 필터를 삭제해도 링크는 삭제되지 않으며 `전체`에서 계속 확인 가능
 - 기존 링크는 데이터 손실 없이 필터 없는 링크로 이전되며 즐겨찾기 설정도 유지
 

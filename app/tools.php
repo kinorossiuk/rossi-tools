@@ -11,10 +11,10 @@ return [
     ],
     'url-shortener' => [
         'name' => 'URL 압축기',
-        'description' => '긴 URL을 짧은 rossiuk.xyz 주소로 압축하고 바로 복사합니다.',
+        'description' => '긴 URL을 Bitly의 짧은 주소로 압축하고 바로 복사합니다.',
         'category' => '생성',
         'path' => '/tools/url-shortener/',
-        'status' => '서버 저장',
+        'status' => 'Bitly 설정',
     ],
     'sms' => [
         'name' => 'SMS 예약 발송',

@@ -161,6 +161,8 @@ function e(string $value): string
           <div><h2 id="work-links-title">업무 도구</h2><span id="work-link-summary">현재 브라우저에만 저장됩니다</span></div>
           <div class="section-actions">
             <button class="section-action" id="edit-work-filter" type="button" hidden>필터 편집</button>
+            <button class="section-action" id="move-work-filter-previous" type="button" hidden>← 이전</button>
+            <button class="section-action" id="move-work-filter-next" type="button" hidden>다음 →</button>
             <button class="section-action" id="add-work-filter" type="button">+ 필터</button>
             <button class="section-action" id="add-work-link" type="button">+ 링크 등록</button>
           </div>
