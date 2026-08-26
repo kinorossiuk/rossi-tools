@@ -26,10 +26,21 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
       <label>파일 종류
         <select id="file-kind" name="kind">
           <option value="png">PNG 이미지</option>
+          <option value="jpg">JPG 이미지</option>
+          <option value="gif">GIF 이미지</option>
+          <option value="psd">PSD 이미지</option>
+          <option value="tif">TIF 이미지</option>
           <option value="txt">TXT 문서</option>
           <option value="pdf">PDF 문서</option>
+          <option value="doc">DOC 문서</option>
           <option value="docx">DOCX 문서</option>
           <option value="xlsx">XLSX 스프레드시트</option>
+          <option value="xls">XLS 스프레드시트</option>
+          <option value="csv">CSV 스프레드시트</option>
+          <option value="ppt">PPT 프레젠테이션</option>
+          <option value="pptx">PPTX 프레젠테이션</option>
+          <option value="hwp">HWP 문서</option>
+          <option value="hwpx">HWPX 문서</option>
           <option value="mp4">MP4 동영상 (H.264)</option>
           <option value="webm">WebM 동영상</option>
         </select>
@@ -43,7 +54,7 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
       <label class="file-image-option">이미지 크기
         <select id="image-dimension" name="dimension"><option value="800x600">800 × 600</option><option value="1280x720">1280 × 720</option><option value="1920x1080">1920 × 1080</option></select>
       </label>
-      <p class="test-hint" id="file-hint">PNG, TXT, PDF, DOCX, XLSX는 10가지 패턴 중 하나를 무작위로 선택해 목표 바이트에 맞춰 생성합니다.</p>
+      <p class="test-hint" id="file-hint">이미지, 문서, 스프레드시트와 프레젠테이션은 10가지 패턴 중 하나를 무작위로 선택해 목표 바이트에 맞춰 생성합니다.</p>
       <button class="primary" type="submit">파일 생성 및 다운로드</button>
       <p class="test-status" id="file-status" role="status" aria-live="polite">모든 파일은 최대 300 MiB까지 만들 수 있습니다. 큰 파일은 충분한 브라우저 메모리가 필요합니다.</p>
     </form>
@@ -122,4 +133,7 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
   </section>
 </section>
 <script defer src="/static/vendor/qrcode-generator.js"></script>
+<script defer src="/static/vendor/text-to-doc.js"></script>
+<script defer src="/static/vendor/js-hwp.min.js"></script>
+<script defer src="/static/vendor/js-hwpx.min.js"></script>
 <script defer src="/static/test-data.js?v=<?= htmlspecialchars($testDataJsVersion, ENT_QUOTES, 'UTF-8') ?>"></script>

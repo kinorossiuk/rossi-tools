@@ -44,8 +44,9 @@ PHP 웹호스팅에서 실행되며 QA 실무를 위해 직접 개발한 개인 
 
 `/tools/test-data/`에서 테스트 업로드용 파일과 데이터 경계값을 만듭니다.
 
-- PNG, TXT, PDF, DOCX, XLSX, MP4, WebM을 최대 300 MiB 목표 크기로 생성
-- PNG, TXT, PDF, DOCX, XLSX는 생성 날짜·시간(KST)을 제목으로 넣고, 같은 파일명에서 10가지 콘텐츠·레이아웃 패턴을 중복 없이 한 번씩 무작위 선택
+- PNG, JPG, GIF, PSD, TIF, TXT, PDF, DOC, DOCX, XLS, XLSX, CSV, PPT, PPTX, HWP, HWPX, MP4, WebM을 최대 300 MiB 목표 크기로 생성
+- PNG·JPG·GIF·PSD·TIF, TXT·PDF·DOC·DOCX, XLS·XLSX·CSV, PPTX, HWP·HWPX는 생성 날짜·시간(KST)을 제목으로 넣고, 같은 파일명에서 10가지 콘텐츠·레이아웃 패턴을 중복 없이 한 번씩 무작위 선택
+- 레거시 PPT는 Microsoft PowerPoint로 작성된 CC0 호환 템플릿을 사용하며, 요청한 정확한 용량에 맞춘 비표시 패딩을 포함
 - MP4는 생성 날짜·시간(KST)을 화면 제목으로 녹화하고 10가지 합성 테스트 사운드 중 하나를 포함해 생성
 - 파일은 실제 형식 구조를 유지하고, 목표 바이트에 맞추기 위한 비표시 패딩을 포함
 - 한글·영문·숫자·특수문자·이모지를 골고루 섞어 최대 100,000자의 경계값 문자를 생성

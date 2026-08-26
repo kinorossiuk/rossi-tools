@@ -99,6 +99,7 @@
   const u16 = (value) => Uint8Array.of(value & 255, (value >>> 8) & 255);
   const u32 = (value) => Uint8Array.of(value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255);
   const be32 = (value) => Uint8Array.of((value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255);
+  const be16 = (value) => Uint8Array.of((value >>> 8) & 255, value & 255);
   const ascii = (value) => encoder.encode(value);
 
   const crcTable = (() => {
@@ -141,6 +142,32 @@
     const padding = target - base.length;
     if (padding < 0) throw new Error(`선택한 용량이 문서 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
     return zip([...entries, { name: 'padding.bin', data: new Uint8Array(padding) }]);
+  };
+
+  const u16At = (data, offset) => data[offset] | (data[offset + 1] << 8);
+  const u32At = (data, offset) => (data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24)) >>> 0;
+  const padExistingZip = (base, target, label) => {
+    let endOffset = -1;
+    for (let offset = base.length - 22; offset >= Math.max(0, base.length - 65557); offset -= 1) {
+      if (u32At(base, offset) === 0x06054b50) { endOffset = offset; break; }
+    }
+    if (endOffset < 0) throw new Error(`${label} ZIP 구조를 확인하지 못했습니다.`);
+    const entryCount = u16At(base, endOffset + 10);
+    const centralLength = u32At(base, endOffset + 12);
+    const centralOffset = u32At(base, endOffset + 16);
+    const commentLength = u16At(base, endOffset + 20);
+    if (centralOffset + centralLength !== endOffset || endOffset + 22 + commentLength !== base.length) throw new Error(`${label} ZIP 구조가 지원 범위를 벗어났습니다.`);
+    const name = ascii('padding.bin');
+    const fixedOverhead = 30 + name.length + 46 + name.length;
+    const paddingLength = target - base.length - fixedOverhead;
+    if (paddingLength < 0) throw new Error(`선택한 용량이 ${label} 최소 크기(${formatBytes(base.length + fixedOverhead)})보다 작습니다.`);
+    const padding = new Uint8Array(paddingLength);
+    const checksum = crc32(padding);
+    const local = concat([ascii('PK\x03\x04'), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding.length), u32(padding.length), u16(name.length), u16(0), name, padding]);
+    const centralPadding = concat([ascii('PK\x01\x02'), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding.length), u32(padding.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(centralOffset), name]);
+    const comment = base.subarray(endOffset + 22);
+    const ending = concat([ascii('PK\x05\x06'), u16(0), u16(0), u16(entryCount + 1), u16(entryCount + 1), u32(centralLength + centralPadding.length), u32(centralOffset + local.length), u16(comment.length), comment]);
+    return concat([base.subarray(0, centralOffset), local, base.subarray(centralOffset, endOffset), centralPadding, ending]);
   };
 
   const xml = (value) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]);
@@ -225,6 +252,24 @@
     { name: 'word/document.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:jc w:val="${patternIndex % 2 ? 'left' : 'center'}"/><w:spacing w:after="180"/><w:shd w:fill="${pattern.accent}"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="34"/><w:color w:val="111310"/></w:rPr><w:t>${xml(generatedTitle)}</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/><w:color w:val="666666"/></w:rPr><w:t>${xml(pattern.title)} · ${xml(pattern.subtitle)}</w:t></w:r></w:p>${docxParagraphs(pattern)}<w:p><w:r><w:t>Target size: ${xml(formatBytes(target))}</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>`) },
   ], target);
 
+  const makePptx = (target, pattern, patternIndex, generatedTitle) => {
+    const accent = `FF${pattern.accent}`;
+    const slideText = (value, size, bold = false) => `<a:p><a:r><a:rPr lang="ko-KR" sz="${size}"${bold ? ' b="1"' : ''}/><a:t>${xml(value)}</a:t></a:r><a:endParaRPr lang="ko-KR"/></a:p>`;
+    return paddedZip([
+      { name: '[Content_Types].xml', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="bin" ContentType="application/vnd.openxmlformats-officedocument.presentationml.printerSettings"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slides/slide1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/></Types>') },
+      { name: '_rels/.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>') },
+      { name: 'ppt/presentation.xml', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:presentation xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId2"/></p:sldMasterIdLst><p:sldIdLst><p:sldId id="256" r:id="rId1"/></p:sldIdLst><p:sldSz cx="12192000" cy="6858000" type="screen16x9"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>') },
+      { name: 'ppt/_rels/presentation.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="slideMasters/slideMaster1.xml"/></Relationships>') },
+      { name: 'ppt/slides/slide1.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/><p:sp><p:nvSpPr><p:cNvPr id="2" name="Title"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="10363200" cy="1371600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>${slideText(generatedTitle, 3000, true)}</p:txBody></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Content"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="914400" y="2438400"/><a:ext cx="10363200" cy="3048000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="${pattern.accent}"/></a:solidFill><a:ln><a:noFill/></a:ln></p:spPr><p:txBody><a:bodyPr lIns="274320" tIns="182880"/><a:lstStyle/>${slideText(`${pattern.title} · ${pattern.subtitle}`, 1800, true)}${pattern.rows.map(([label, value]) => slideText(`${label}: ${value}`, 1400)).join('')}${slideText(`Target size: ${formatBytes(target)}`, 1100)}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>`) },
+      { name: 'ppt/slides/_rels/slide1.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>') },
+      { name: 'ppt/slideLayouts/slideLayout1.xml', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldLayout xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" type="blank" preserve="1"><p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>') },
+      { name: 'ppt/slideLayouts/_rels/slideLayout1.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>') },
+      { name: 'ppt/slideMasters/slideMaster1.xml', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld name="ROSSI Tools"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>') },
+      { name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>') },
+      { name: 'ppt/theme/theme1.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="ROSSI Theme"><a:themeElements><a:clrScheme name="ROSSI"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="1B1E1B"/></a:dk2><a:lt2><a:srgbClr val="F5F3EB"/></a:lt2><a:accent1><a:srgbClr val="${pattern.accent}"/></a:accent1><a:accent2><a:srgbClr val="78DCE8"/></a:accent2><a:accent3><a:srgbClr val="FFB86C"/></a:accent3><a:accent4><a:srgbClr val="BD93F9"/></a:accent4><a:accent5><a:srgbClr val="50FA7B"/></a:accent5><a:accent6><a:srgbClr val="FF79C6"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="ROSSI"><a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface="맑은 고딕"/><a:cs typeface="Arial"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/><a:ea typeface="맑은 고딕"/><a:cs typeface="Arial"/></a:minorFont></a:fontScheme><a:fmtScheme name="ROSSI"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`) },
+    ], target);
+  };
+
   const pdfEscape = (value) => value.replace(/[\\()]/g, '\\$&');
   const pdfPatternContent = (pattern, patternIndex, target, generatedTitle) => {
     const accent = [parseInt(pattern.accent.slice(0, 2), 16), parseInt(pattern.accent.slice(2, 4), 16), parseInt(pattern.accent.slice(4, 6), 16)].map((value) => (value / 255).toFixed(3));
@@ -266,6 +311,14 @@
       padding += difference;
     }
     throw new Error('PDF 크기를 맞추지 못했습니다. 다시 시도해 주세요.');
+  };
+
+  const makeDoc = (target, pattern, generatedTitle) => {
+    if (typeof window.textToDoc !== 'function') throw new Error('DOC 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
+    const content = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]].map((row) => `${row[0]}: ${row[1]}`).join('\r\n');
+    const base = window.textToDoc(content);
+    if (base.length > target) throw new Error(`선택한 용량이 DOC 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
+    return concat([base, new Uint8Array(target - base.length)]);
   };
 
   const textPatterns = [
@@ -369,6 +422,275 @@
     const padding = new Uint8Array(remaining - 12);
     padding.set(ascii('padding\0'));
     return concat([base.subarray(0, base.length - 12), pngChunk('tEXt', padding), base.subarray(base.length - 12)]);
+  };
+
+  const makeJpeg = async (target, pattern, patternIndex, generatedTitle) => {
+    const [width, height] = dimension.value.split('x').map(Number);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d');
+    drawPngPattern(context, width, height, pattern, patternIndex);
+    context.fillStyle = `#${pattern.accent}`;
+    context.font = `700 ${Math.max(22, Math.floor(width / 24))}px ui-monospace, monospace`;
+    context.fillText(generatedTitle, Math.floor(width * .08), Math.floor(height * .48));
+    context.fillStyle = '#f5f3eb';
+    context.font = `500 ${Math.max(16, Math.floor(width / 32))}px system-ui`;
+    context.fillText(`${pattern.title} · ${pattern.name} · ${formatBytes(target)}`, Math.floor(width * .08), Math.floor(height * .58));
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', .9));
+    if (!blob) throw new Error('JPG 이미지를 만들지 못했습니다.');
+    const base = new Uint8Array(await blob.arrayBuffer());
+    const difference = target - base.length;
+    if (difference < 4) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 4)})보다 작습니다.`);
+    const comments = [];
+    const segmentCount = Math.ceil(difference / 65537);
+    let remainingPayload = difference - segmentCount * 4;
+    for (let index = 0; index < segmentCount; index += 1) {
+      const payloadLength = Math.min(65533, remainingPayload);
+      remainingPayload -= payloadLength;
+      comments.push(concat([Uint8Array.of(0xff, 0xfe), be16(payloadLength + 2), new Uint8Array(payloadLength)]));
+    }
+    return concat([base.subarray(0, 2), ...comments, base.subarray(2)]);
+  };
+
+  const gifLzw = (pixels) => {
+    const clear = 4;
+    const end = 5;
+    let codeSize = 3;
+    let nextCode = 6;
+    let dictionary = new Map([['0', 0], ['1', 1]]);
+    const codes = [clear];
+    let prefix = String(pixels[0] || 0);
+    for (let index = 1; index < pixels.length; index += 1) {
+      const value = String(pixels[index]);
+      const combined = `${prefix},${value}`;
+      if (dictionary.has(combined)) prefix = combined;
+      else {
+        codes.push(dictionary.get(prefix));
+        if (nextCode < 4096) {
+          dictionary.set(combined, nextCode++);
+          if (nextCode === (1 << codeSize) && codeSize < 12) codeSize += 1;
+        } else {
+          codes.push(clear);
+          dictionary = new Map([['0', 0], ['1', 1]]);
+          codeSize = 3;
+          nextCode = 6;
+        }
+        prefix = value;
+      }
+    }
+    codes.push(dictionary.get(prefix), end);
+    const bytes = [];
+    let bitBuffer = 0;
+    let bitCount = 0;
+    codeSize = 3;
+    nextCode = 6;
+    let previous = null;
+    codes.forEach((code) => {
+      bitBuffer |= code << bitCount;
+      bitCount += codeSize;
+      while (bitCount >= 8) { bytes.push(bitBuffer & 255); bitBuffer >>>= 8; bitCount -= 8; }
+      if (code === clear) { codeSize = 3; nextCode = 6; previous = null; return; }
+      if (code === end) return;
+      if (previous !== null && nextCode < 4096) {
+        nextCode += 1;
+        if (nextCode === (1 << codeSize) && codeSize < 12) codeSize += 1;
+      }
+      previous = code;
+    });
+    if (bitCount) bytes.push(bitBuffer & 255);
+    const blocks = [];
+    for (let offset = 0; offset < bytes.length; offset += 255) blocks.push(Uint8Array.of(Math.min(255, bytes.length - offset)), Uint8Array.from(bytes.slice(offset, offset + 255)));
+    return concat([...blocks, Uint8Array.of(0)]);
+  };
+
+  const gifComment = (totalLength) => {
+    for (let blockCount = Math.max(1, Math.ceil((totalLength - 3) / 256)); blockCount <= Math.ceil(totalLength / 3); blockCount += 1) {
+      const payloadLength = totalLength - 3 - blockCount;
+      if (payloadLength >= 0 && payloadLength <= blockCount * 255 && payloadLength > (blockCount - 1) * 255) {
+        const parts = [Uint8Array.of(0x21, 0xfe)];
+        let remaining = payloadLength;
+        while (remaining) { const length = Math.min(255, remaining); parts.push(Uint8Array.of(length), new Uint8Array(length)); remaining -= length; }
+        parts.push(Uint8Array.of(0));
+        return concat(parts);
+      }
+    }
+    throw new Error('GIF 패딩을 만들지 못했습니다.');
+  };
+
+  const makeGif = (target, pattern, patternIndex, generatedTitle) => {
+    const [width, height] = dimension.value.split('x').map(Number);
+    const pixels = new Uint8Array(width * height);
+    const block = Math.max(20, Math.floor(width / 12));
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) pixels[y * width + x] = ((Math.floor(x / block) + Math.floor(y / block) + patternIndex) % 3 === 0 || (x > width * .12 && x < width * .88 && y > height * .38 && y < height * .62)) ? 1 : 0;
+    const [red, green, blue] = [parseInt(pattern.accent.slice(0, 2), 16), parseInt(pattern.accent.slice(2, 4), 16), parseInt(pattern.accent.slice(4, 6), 16)];
+    const base = concat([
+      ascii('GIF89a'), u16(width), u16(height), Uint8Array.of(0xf0, 0, 0),
+      Uint8Array.of(23, 26, 23, red, green, blue),
+      Uint8Array.of(0x21, 0xfe, Math.min(255, encoder.encode(generatedTitle).length)), encoder.encode(generatedTitle).subarray(0, 255), Uint8Array.of(0),
+      Uint8Array.of(0x2c), u16(0), u16(0), u16(width), u16(height), Uint8Array.of(0), Uint8Array.of(2), gifLzw(pixels), Uint8Array.of(0x3b),
+    ]);
+    const difference = target - base.length;
+    if (difference < 4) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 4)})보다 작습니다.`);
+    const comment = gifComment(difference);
+    return concat([base.subarray(0, base.length - 1), comment, base.subarray(base.length - 1)]);
+  };
+
+  const tiffEntry = (tag, type, count, value) => concat([be16(tag), be16(type), be32(count), value]);
+  const makeTiff = (target, patternIndex, generatedTitle) => {
+    const [width, height] = dimension.value.split('x').map(Number);
+    const rowBytes = Math.ceil(width / 8);
+    const bitmap = new Uint8Array(rowBytes * height);
+    const block = Math.max(16, Math.floor(width / 12));
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) if ((Math.floor(x / block) + Math.floor(y / block) + patternIndex) % 2) bitmap[y * rowBytes + (x >> 3)] |= 1 << (7 - (x & 7));
+    const ifdLength = 2 + 10 * 12 + 4;
+    const descriptionCount = target - (8 + ifdLength + bitmap.length);
+    if (descriptionCount < 1) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(8 + ifdLength + bitmap.length + 1)})보다 작습니다.`);
+    const descriptionOffset = 8 + ifdLength;
+    const stripOffset = descriptionOffset + descriptionCount;
+    const entries = [
+      tiffEntry(256, 4, 1, be32(width)), tiffEntry(257, 4, 1, be32(height)), tiffEntry(258, 3, 1, concat([be16(1), u16(0)])),
+      tiffEntry(259, 3, 1, concat([be16(1), u16(0)])), tiffEntry(262, 3, 1, concat([be16(1), u16(0)])), tiffEntry(270, 2, descriptionCount, be32(descriptionOffset)),
+      tiffEntry(273, 4, 1, be32(stripOffset)), tiffEntry(277, 3, 1, concat([be16(1), u16(0)])), tiffEntry(278, 4, 1, be32(height)), tiffEntry(279, 4, 1, be32(bitmap.length)),
+    ];
+    const description = new Uint8Array(descriptionCount);
+    description.set(ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, Math.max(0, description.length - 1)), 0);
+    return concat([ascii('MM'), be16(42), be32(8), be16(entries.length), ...entries, be32(0), description, bitmap]);
+  };
+
+  const makePsd = (target, patternIndex, generatedTitle) => {
+    const [width, height] = dimension.value.split('x').map(Number);
+    const pixels = width * height;
+    const baseLength = 26 + 4 + 4 + 4 + 2 + pixels * 3;
+    const difference = target - baseLength;
+    if (difference < 12 || difference % 2) throw new Error(`PSD는 선택한 이미지 크기에서 최소 ${formatBytes(baseLength + 12)}이며, 목표 바이트는 짝수여야 합니다.`);
+    const resourceDataLength = difference - 12;
+    const channels = [new Uint8Array(pixels), new Uint8Array(pixels), new Uint8Array(pixels)];
+    const block = Math.max(20, Math.floor(width / 12));
+    for (let y = 0; y < height; y += 1) for (let x = 0; x < width; x += 1) {
+      const index = y * width + x;
+      const active = (Math.floor(x / block) + Math.floor(y / block) + patternIndex) % 2;
+      channels[0][index] = active ? 215 : 23;
+      channels[1][index] = active ? 255 : 26;
+      channels[2][index] = active ? 95 : 23;
+    }
+    const resourceData = new Uint8Array(resourceDataLength);
+    resourceData.set(ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, resourceData.length));
+    const resource = concat([ascii('8BIM'), be16(2999), Uint8Array.of(0, 0), be32(resourceDataLength), resourceData]);
+    return concat([
+      ascii('8BPS'), be16(1), new Uint8Array(6), be16(3), be32(height), be32(width), be16(8), be16(3),
+      be32(0), be32(resource.length), resource, be32(0), be16(0), ...channels,
+    ]);
+  };
+
+  const makeHwpx = (target, pattern, generatedTitle) => {
+    const rows = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]];
+    if (typeof window.rossiHwpx?.create !== 'function') throw new Error('HWPX 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
+    const base = window.rossiHwpx.create(rows.map((row) => `${row[0]}: ${row[1]}`).join('\n'), generatedTitle);
+    return padExistingZip(base, target, 'HWPX');
+  };
+
+  const makeHwp = (target, pattern, generatedTitle) => {
+    if (typeof window.rossiHwp?.create !== 'function') throw new Error('HWP 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
+    const content = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]].map((row) => `${row[0]}: ${row[1]}`).join('\n');
+    const base = window.rossiHwp.create(content, generatedTitle);
+    if (base.length > target) throw new Error(`선택한 용량이 HWP 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
+    return concat([base, new Uint8Array(target - base.length)]);
+  };
+
+  const utf16le = (value) => {
+    const output = new Uint8Array(value.length * 2);
+    for (let index = 0; index < value.length; index += 1) { output[index * 2] = value.charCodeAt(index) & 255; output[index * 2 + 1] = value.charCodeAt(index) >>> 8; }
+    return output;
+  };
+  const u64 = (value) => concat([u32(value >>> 0), u32(0)]);
+  const biffRecord = (id, data) => concat([u16(id), u16(data.length), data]);
+  const biffText = (value) => {
+    const unicode = /[^\x00-\xff]/.test(value);
+    const body = unicode ? utf16le(value) : ascii(value);
+    return concat([u16(value.length), Uint8Array.of(unicode ? 1 : 0), body]);
+  };
+  const cfbDirectoryEntry = (name, type, startSector, size, child = 0xffffffff) => {
+    const nameBytes = utf16le(`${name}\0`);
+    const nameField = new Uint8Array(64);
+    nameField.set(nameBytes.subarray(0, 64));
+    return concat([nameField, u16(Math.min(nameBytes.length, 64)), Uint8Array.of(type, 1), u32(0xffffffff), u32(0xffffffff), u32(child), new Uint8Array(16), u32(0), new Uint8Array(8), new Uint8Array(8), u32(startSector), u64(size)]);
+  };
+  const cfbWorkbook = (workbook, target) => {
+    const endOfChain = 0xfffffffe;
+    const freeSector = 0xffffffff;
+    const availableSectors = Math.floor((target - 512) / 512);
+    const fatSectors = Math.ceil(availableSectors / 128);
+    const difatSectors = fatSectors > 109 ? Math.ceil((fatSectors - 109) / 127) : 0;
+    const workbookSectors = availableSectors - 1 - fatSectors - difatSectors;
+    const requestedStream = workbookSectors * 512;
+    if (requestedStream < Math.max(4096, workbook.length)) throw new Error(`선택한 용량이 XLS 최소 크기(${formatBytes(512 + (Math.ceil(Math.max(4096, workbook.length) / 512) + 2) * 512)})보다 작습니다.`);
+    const stream = new Uint8Array(requestedStream);
+    stream.set(workbook);
+    const directorySector = workbookSectors;
+    const firstFatSector = workbookSectors + 1;
+    const firstDifatSector = firstFatSector + fatSectors;
+    const header = new Uint8Array(512);
+    header.set(Uint8Array.of(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1), 0);
+    header.set(u16(0x003e), 24); header.set(u16(3), 26); header.set(u16(0xfffe), 28); header.set(u16(9), 30); header.set(u16(6), 32);
+    header.set(u32(0), 40); header.set(u32(fatSectors), 44); header.set(u32(directorySector), 48); header.set(u32(0), 52); header.set(u32(4096), 56); header.set(u32(endOfChain), 60); header.set(u32(0), 64); header.set(u32(difatSectors ? firstDifatSector : endOfChain), 68); header.set(u32(difatSectors), 72);
+    for (let index = 0; index < 109; index += 1) header.set(u32(index < fatSectors ? firstFatSector + index : freeSector), 76 + index * 4);
+    const directory = new Uint8Array(512);
+    directory.set(cfbDirectoryEntry('Root Entry', 5, endOfChain, 0, 1), 0);
+    directory.set(cfbDirectoryEntry('Workbook', 2, 0, workbook.length), 128);
+    const fatEntries = new Uint32Array(fatSectors * 128);
+    fatEntries.fill(freeSector);
+    for (let index = 0; index < workbookSectors; index += 1) fatEntries[index] = index + 1 < workbookSectors ? index + 1 : endOfChain;
+    fatEntries[directorySector] = endOfChain;
+    for (let index = 0; index < fatSectors; index += 1) fatEntries[firstFatSector + index] = 0xfffffffd;
+    for (let index = 0; index < difatSectors; index += 1) fatEntries[firstDifatSector + index] = 0xfffffffc;
+    const fats = Array.from({ length: fatSectors }, (_, sectorIndex) => {
+      const sector = new Uint8Array(512);
+      for (let index = 0; index < 128; index += 1) sector.set(u32(fatEntries[sectorIndex * 128 + index]), index * 4);
+      return sector;
+    });
+    const difats = Array.from({ length: difatSectors }, (_, sectorIndex) => {
+      const sector = new Uint8Array(512);
+      for (let index = 0; index < 127; index += 1) { const fatIndex = 109 + sectorIndex * 127 + index; sector.set(u32(fatIndex < fatSectors ? firstFatSector + fatIndex : freeSector), index * 4); }
+      sector.set(u32(sectorIndex + 1 < difatSectors ? firstDifatSector + sectorIndex + 1 : endOfChain), 127 * 4);
+      return sector;
+    });
+    const cfb = concat([header, stream, directory, ...fats, ...difats]);
+    if (cfb.length > target) throw new Error(`선택한 용량이 XLS 최소 크기(${formatBytes(cfb.length)})보다 작습니다.`);
+    return concat([cfb, new Uint8Array(target - cfb.length)]);
+  };
+  const makePpt = async (target) => {
+    const response = await fetch('/static/vendor/ppt-template.ppt?v=1', { cache: 'force-cache' });
+    if (!response.ok) throw new Error('PPT 원본 템플릿을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
+    const base = new Uint8Array(await response.arrayBuffer());
+    if (base.length > target) throw new Error(`선택한 용량이 PPT 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
+    return concat([base, new Uint8Array(target - base.length)]);
+  };
+  const makeXls = (target, pattern, generatedTitle) => {
+    const records = [];
+    const globalBof = concat([u16(0x0600), u16(0x0005), u16(0x0dbb), u16(0x07cc), u32(0x00000041), u32(0x00000006)]);
+    records.push(biffRecord(0x0809, globalBof));
+    const sheetName = 'Test Data';
+    const boundSheetOffsetPlaceholder = biffRecord(0x0085, concat([u32(0), Uint8Array.of(0, 0, sheetName.length, 0), ascii(sheetName)]));
+    records.push(boundSheetOffsetPlaceholder, biffRecord(0x000a, new Uint8Array(0)));
+    const sheetOffset = records.reduce((total, record) => total + record.length, 0);
+    const boundSheet = biffRecord(0x0085, concat([u32(sheetOffset), Uint8Array.of(0, 0, sheetName.length, 0), ascii(sheetName)]));
+    records[1] = boundSheet;
+    records.push(biffRecord(0x0809, concat([u16(0x0600), u16(0x0010), u16(0x0dbb), u16(0x07cc), u32(0x00000041), u32(0x00000006)])));
+    [[generatedTitle, pattern.title], ...pattern.rows, ['Target size', formatBytes(target)]].forEach((row, rowIndex) => row.forEach((value, columnIndex) => records.push(biffRecord(0x0204, concat([u16(rowIndex), u16(columnIndex), u16(0), biffText(value)])))));
+    records.push(biffRecord(0x000a, new Uint8Array(0)));
+    return cfbWorkbook(concat(records), target);
+  };
+
+  const csvCell = (value) => `"${String(value).replace(/"/g, '""')}"`;
+  const makeCsv = (target, pattern, generatedTitle) => {
+    const rows = [['generated_title', 'category', 'value'], [generatedTitle, pattern.title, pattern.subtitle], ...pattern.rows];
+    const prefix = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n"padding" ,"`;
+    const prefixBytes = encoder.encode(prefix).length;
+    const ending = '"\r\n';
+    const paddingLength = target - prefixBytes - encoder.encode(ending).length;
+    if (paddingLength < 0) throw new Error(`선택한 용량이 CSV 최소 크기(${formatBytes(prefixBytes + encoder.encode(ending).length)})보다 작습니다.`);
+    return encoder.encode(`${prefix}${'x'.repeat(paddingLength)}${ending}`);
   };
 
   const makeWebm = async (target) => {
@@ -550,15 +872,17 @@
   };
 
   const updateFileOptions = () => {
-    const isImage = fileKind.value === 'png';
+    const isImage = ['png', 'jpg', 'gif', 'psd', 'tif'].includes(fileKind.value);
     const isVideo = fileKind.value === 'webm' || fileKind.value === 'mp4';
     imageOption.hidden = !isImage;
     fileSize.max = '300';
     fileHint.textContent = fileKind.value === 'mp4'
       ? '지원 브라우저에서는 생성 날짜·시간(KST)을 화면 제목으로 직접 녹화하고, 10가지 테스트 사운드 중 하나를 무작위로 넣습니다.'
+      : fileKind.value === 'ppt'
+      ? 'PPT는 Microsoft PowerPoint에서 만든 호환 템플릿을 바탕으로 요청한 용량에 맞춰 생성합니다.'
       : isVideo
       ? '모바일 호환을 위해 실제 WebM을 녹화합니다. 목표 용량에 맞춰 영상 길이를 자동으로 정합니다. 실제 파일 크기는 목표에 가깝게 생성됩니다.'
-      : 'PNG, TXT, PDF, DOCX, XLSX는 생성 날짜·시간(KST)을 제목으로 넣고, 파일명별로 중복 없는 10가지 테스트 패턴으로 만듭니다.';
+      : 'PNG, JPG, GIF, PSD, TIF, TXT, PDF, DOC, DOCX, XLS, XLSX, CSV, PPT, PPTX, HWP, HWPX는 생성 날짜·시간(KST)을 제목으로 넣고, 파일명별로 중복 없는 10가지 테스트 패턴으로 만듭니다.';
   };
 
   tabs.forEach((tab) => tab.addEventListener('click', () => {
@@ -591,10 +915,21 @@
       const pattern = documentPatterns[patternIndex];
       const generatedTitle = generatedKstTitle();
       if (kind === 'png') { data = await makePng(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'jpg') { data = await makeJpeg(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'gif') { data = makeGif(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'psd') { data = makePsd(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'tif') { data = makeTiff(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'txt') { data = makeText(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'pdf') { data = makePdf(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'doc') { data = makeDoc(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'docx') { data = makeDocx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'xlsx') { data = makeXlsx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'xls') { data = makeXls(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'csv') { data = makeCsv(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'ppt') { data = await makePpt(target); generatedPatternName = 'PowerPoint 호환 템플릿'; }
+      else if (kind === 'pptx') { data = makePptx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'hwp') { data = makeHwp(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'hwpx') { data = makeHwpx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'mp4') {
         const mp4 = await makeMp4(target, patternIndex, generatedTitle);
         data = mp4.blob;
@@ -610,13 +945,15 @@
       }
       const dataLength = data instanceof Blob ? data.size : data.length;
       if (kind !== 'webm' && dataLength !== target) throw new Error(`목표 용량과 다릅니다 (${dataLength.toLocaleString('ko-KR')} bytes).`);
-      const mime = { png: 'image/png', txt: 'text/plain;charset=utf-8', pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', webm: 'video/webm', mp4: 'video/mp4' }[kind];
+      const mime = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', psd: 'image/vnd.adobe.photoshop', tif: 'image/tiff', txt: 'text/plain;charset=utf-8', pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv;charset=utf-8', ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', hwp: 'application/x-hwp', hwpx: 'application/vnd.hancom.hwpx', webm: 'video/webm', mp4: 'video/mp4' }[kind];
       download(data instanceof Blob ? data : new Blob([data], { type: mime }), `${safeName(fileName.value, 'test-file')}.${kind}`);
       setStatus(fileStatus, kind === 'webm'
         ? `WebM 영상 ${formatBytes(data.size)}을 만들었습니다. 자동 지정 길이: ${formatDuration(videoDurationSeconds)} · 목표: ${formatBytes(target)}`
         : kind === 'mp4'
           ? `H.264/AAC MP4 영상 ${formatBytes(data.size)}을 만들었습니다. 사운드: ${generatedPatternName} · ${hasDynamicVideoTitle ? `화면 제목: ${generatedVideoTitle}` : '이 브라우저는 동적 MP4 제목을 지원하지 않아 기본 영상을 사용했습니다.'} · 길이: ${formatDuration(videoDurationSeconds)}`
-        : `${kind.toUpperCase()} 파일 ${formatBytes(data.length)}을 만들었습니다. 생성 제목: ${generatedTitle} · 패턴: ${generatedPatternName} (파일명별 중복 없는 랜덤 10종)`);
+        : kind === 'ppt'
+          ? `PPT 파일 ${formatBytes(data.length)}을 만들었습니다. 원본: ${generatedPatternName} · 요청 용량에 맞춘 비표시 패딩 포함`
+          : `${kind.toUpperCase()} 파일 ${formatBytes(data.length)}을 만들었습니다. 생성 제목: ${generatedTitle} · 패턴: ${generatedPatternName} (파일명별 중복 없는 랜덤 10종)`);
       button.disabled = false;
     } catch (error) {
       setStatus(fileStatus, error instanceof Error ? error.message : '파일을 생성하지 못했습니다.', true);
