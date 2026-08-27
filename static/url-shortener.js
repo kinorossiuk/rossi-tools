@@ -44,8 +44,8 @@
       const created = document.createElement('time'); created.dateTime = link.created_at; created.textContent = `${dateFormatter.format(new Date(link.created_at))} 생성`; main.append(shortAnchor, original, created);
       const actions = document.createElement('div'); actions.className = 'url-shortener-item-actions';
       actions.append(makeButton('복사', 'ghost', async () => { try { await copyText(compact); setStatus('단축 URL을 클립보드에 복사했습니다.'); } catch (error) { setStatus(error instanceof Error ? error.message : '복사하지 못했습니다.', true); } }), makeButton('삭제', 'ghost url-shortener-delete', async (event) => {
-        if (!window.confirm('이 단축 URL을 목록에서 삭제할까요? is.gd 주소 자체는 계속 작동합니다.')) return; const button = event.currentTarget; button.disabled = true;
-        try { await request({ method: 'POST', body: JSON.stringify({ action: 'delete', id: link.id }) }); if (output.value === compact) result.hidden = true; setStatus('단축 URL을 목록에서 삭제했습니다.'); await loadLinks(false); } catch (error) { button.disabled = false; setStatus(error instanceof Error ? error.message : '삭제하지 못했습니다.', true); }
+        const confirmation = link.provider === 'self' ? '이 단축 URL을 삭제할까요? 삭제하면 주소가 더 이상 작동하지 않습니다.' : '이 단축 URL을 목록에서 삭제할까요? 외부 단축 주소 자체는 계속 작동합니다.'; if (!window.confirm(confirmation)) return; const button = event.currentTarget; button.disabled = true;
+        try { await request({ method: 'POST', body: JSON.stringify({ action: 'delete', id: link.id }) }); if (output.value === compact) result.hidden = true; setStatus(link.provider === 'self' ? '단축 URL을 삭제했습니다.' : '단축 URL을 목록에서 삭제했습니다.'); await loadLinks(false); } catch (error) { button.disabled = false; setStatus(error instanceof Error ? error.message : '삭제하지 못했습니다.', true); }
       })); article.append(main, actions); items.append(article);
     });
   };

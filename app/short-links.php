@@ -4,8 +4,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/auth.php';
 
 const ROSSI_SHORT_LINK_LIMIT = 5000;
+const ROSSI_SHORT_CODE_LENGTH = 8;
 const ROSSI_SHORT_URL_MAX_LENGTH = 4096;
-const ROSSI_ISGD_API_URL = 'https://is.gd/create.php';
 
 function rossi_short_links_paths(): array
 {
@@ -144,43 +144,32 @@ function rossi_short_links_normalise_url(string $value): string
     }
     $sensitiveKey = rossi_short_links_sensitive_query_key($url);
     if ($sensitiveKey !== null) {
-        throw new InvalidArgumentException('민감한 쿼리값(' . $sensitiveKey . ')이 포함된 URL은 단축 서비스로 전송할 수 없습니다.');
+        throw new InvalidArgumentException('민감한 쿼리값(' . $sensitiveKey . ')이 포함된 URL은 단축할 수 없습니다.');
     }
     return $url;
 }
 
-function rossi_isgd_shorten(string $url): array
+function rossi_short_links_generate_code(array $links): string
 {
-    if (!function_exists('curl_init')) {
-        throw new RuntimeException('서버에 cURL이 없어 is.gd API를 호출할 수 없습니다.');
-    }
-    $curl = curl_init(ROSSI_ISGD_API_URL);
-    if ($curl === false) {
-        throw new RuntimeException('is.gd 연결을 시작할 수 없습니다.');
-    }
-    curl_setopt_array($curl, [
-        CURLOPT_POST => true,
-        CURLOPT_POSTFIELDS => http_build_query(['format' => 'json', 'url' => $url], '', '&', PHP_QUERY_RFC3986),
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_CONNECTTIMEOUT => 8,
-        CURLOPT_TIMEOUT => 15,
-        CURLOPT_HTTPHEADER => ['Accept: application/json'],
-    ]);
-    $response = curl_exec($curl);
-    $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
-    $error = curl_error($curl);
-    curl_close($curl);
-    $decoded = json_decode((string) $response, true);
-    if ($response === false || !is_array($decoded) || $status < 200 || $status >= 300) {
-        if (is_array($decoded) && (int) ($decoded['errorcode'] ?? 0) === 3) {
-            throw new RuntimeException('is.gd 호출 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.');
+    $alphabet = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+    $lastIndex = strlen($alphabet) - 1;
+    for ($attempt = 0; $attempt < 64; $attempt++) {
+        $code = '';
+        for ($index = 0; $index < ROSSI_SHORT_CODE_LENGTH; $index++) {
+            $code .= $alphabet[random_int(0, $lastIndex)];
         }
-        throw new RuntimeException($error !== '' ? 'is.gd 연결에 실패했습니다.' : 'is.gd API가 요청을 처리하지 못했습니다. (HTTP ' . $status . ')');
+        $inUse = false;
+        foreach ($links as $link) {
+            if (($link['provider'] ?? '') === 'self' && ($link['code'] ?? '') === $code) {
+                $inUse = true;
+                break;
+            }
+        }
+        if (!$inUse) {
+            return $code;
+        }
     }
-    if (isset($decoded['errorcode'])) {
-        throw new RuntimeException('is.gd가 URL을 압축하지 못했습니다: ' . (string) ($decoded['errormessage'] ?? '입력 URL을 확인해 주세요.'));
-    }
-    return $decoded;
+    throw new RuntimeException('고유한 단축 코드를 만들 수 없습니다. 잠시 후 다시 시도해 주세요.');
 }
 
 function rossi_short_links_list(): array
@@ -213,42 +202,25 @@ function rossi_short_links_create(string $value): array
 {
     $url = rossi_short_links_normalise_url($value);
     $paths = rossi_short_links_paths();
-    $lock = rossi_short_links_open_lock($paths, LOCK_SH);
-    try {
-        $existing = rossi_short_links_read_unlocked($paths['data']);
-        if (count($existing) >= ROSSI_SHORT_LINK_LIMIT) {
-            throw new RuntimeException('저장 가능한 단축 URL 5,000개를 모두 사용했습니다. 기존 항목을 삭제해 주세요.');
-        }
-        foreach ($existing as $link) {
-            if (($link['provider'] ?? '') === 'isgd' && ($link['url'] ?? '') === $url) {
-                return ['link' => $link, 'created' => false];
-            }
-        }
-    } finally {
-        rossi_short_links_close_lock($lock);
-    }
-
-    $isgd = rossi_isgd_shorten($url);
-    $shortUrl = (string) ($isgd['shorturl'] ?? '');
-    if (filter_var($shortUrl, FILTER_VALIDATE_URL) === false) {
-        throw new RuntimeException('is.gd가 올바른 단축 URL을 반환하지 않았습니다.');
-    }
-    $id = $shortUrl;
-    $link = ['id' => $id, 'provider' => 'isgd', 'short_url' => $shortUrl, 'url' => $url, 'created_at' => gmdate('c')];
     $lock = rossi_short_links_open_lock($paths, LOCK_EX);
     try {
         $links = rossi_short_links_read_unlocked($paths['data']);
-        foreach ($links as $saved) {
-            if (($saved['provider'] ?? '') === 'isgd' && ($saved['id'] ?? '') === $id) {
-                return ['link' => $saved, 'created' => false];
+        if (count($links) >= ROSSI_SHORT_LINK_LIMIT) {
+            throw new RuntimeException('저장 가능한 단축 URL 5,000개를 모두 사용했습니다. 기존 항목을 삭제해 주세요.');
+        }
+        foreach ($links as $link) {
+            if (($link['provider'] ?? '') === 'self' && ($link['url'] ?? '') === $url) {
+                return ['link' => $link, 'created' => false];
             }
         }
-        $links['isgd:' . hash('sha256', $id)] = $link;
+        $code = rossi_short_links_generate_code($links);
+        $link = ['id' => $code, 'provider' => 'self', 'code' => $code, 'url' => $url, 'created_at' => gmdate('c')];
+        $links[$code] = $link;
         rossi_short_links_write_unlocked($paths['data'], $links);
+        return ['link' => $link, 'created' => true];
     } finally {
         rossi_short_links_close_lock($lock);
     }
-    return ['link' => $link, 'created' => true];
 }
 
 function rossi_short_links_delete(string $id): bool
