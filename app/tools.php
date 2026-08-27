@@ -11,10 +11,10 @@ return [
     ],
     'url-shortener' => [
         'name' => 'URL 압축기',
-        'description' => '긴 URL을 Bitly의 짧은 주소로 압축하고 바로 복사합니다.',
+        'description' => '긴 URL을 is.gd의 짧은 주소로 압축하고 바로 복사합니다.',
         'category' => '생성',
         'path' => '/tools/url-shortener/',
-        'status' => 'Bitly 설정',
+        'status' => 'is.gd 연결',
     ],
     'sms' => [
         'name' => 'SMS 예약 발송',

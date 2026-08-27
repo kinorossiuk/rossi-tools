@@ -3,14 +3,14 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/auth.php';
 
-const ROSSI_SHORT_LINK_LIMIT = 500;
+const ROSSI_SHORT_LINK_LIMIT = 5000;
 const ROSSI_SHORT_URL_MAX_LENGTH = 4096;
-const ROSSI_BITLY_API_BASE = 'https://api-ssl.bitly.com/v4';
+const ROSSI_ISGD_API_URL = 'https://is.gd/create.php';
 
 function rossi_short_links_paths(): array
 {
     $directory = rossi_security_dir();
-    return ['directory' => $directory, 'data' => $directory . '/short-links.json', 'lock' => $directory . '/short-links.lock', 'bitly' => $directory . '/bitly.php'];
+    return ['directory' => $directory, 'data' => $directory . '/short-links.json', 'lock' => $directory . '/short-links.lock'];
 }
 
 function rossi_short_links_prepare_directory(string $directory): void
@@ -63,13 +63,13 @@ function rossi_short_links_read_unlocked(string $path): array
         if ($url === '' || $createdAt === '') {
             continue;
         }
-        if ($provider === 'bitly') {
+        if ($provider === 'bitly' || $provider === 'isgd') {
             $id = (string) ($link['id'] ?? '');
             $shortUrl = (string) ($link['short_url'] ?? '');
             if ($id === '' || filter_var($shortUrl, FILTER_VALIDATE_URL) === false) {
                 continue;
             }
-            $links[$storageKey] = ['id' => $id, 'provider' => 'bitly', 'short_url' => $shortUrl, 'url' => $url, 'created_at' => $createdAt];
+            $links[$storageKey] = ['id' => $id, 'provider' => $provider, 'short_url' => $shortUrl, 'url' => $url, 'created_at' => $createdAt];
             continue;
         }
 
@@ -144,70 +144,43 @@ function rossi_short_links_normalise_url(string $value): string
     }
     $sensitiveKey = rossi_short_links_sensitive_query_key($url);
     if ($sensitiveKey !== null) {
-        throw new InvalidArgumentException('민감한 쿼리값(' . $sensitiveKey . ')이 포함된 URL은 Bitly로 전송할 수 없습니다.');
+        throw new InvalidArgumentException('민감한 쿼리값(' . $sensitiveKey . ')이 포함된 URL은 단축 서비스로 전송할 수 없습니다.');
     }
     return $url;
 }
 
-function rossi_bitly_token(): string
-{
-    $paths = rossi_short_links_paths();
-    if (!is_file($paths['bitly'])) {
-        throw new RuntimeException('Bitly API 토큰이 설정되지 않았습니다. cPanel 터미널에서 bin/set-bitly-token.php를 실행해 주세요.');
-    }
-    $config = require $paths['bitly'];
-    $token = is_array($config) ? trim((string) ($config['access_token'] ?? '')) : '';
-    if ($token === '' || preg_match('/\s/', $token) || strlen($token) > 512) {
-        throw new RuntimeException('Bitly API 토큰 설정을 확인해 주세요.');
-    }
-    return $token;
-}
-
-function rossi_bitly_is_configured(): bool
-{
-    try {
-        rossi_bitly_token();
-        return true;
-    } catch (RuntimeException $error) {
-        return false;
-    }
-}
-
-function rossi_bitly_request(string $method, string $path, ?array $payload = null): array
+function rossi_isgd_shorten(string $url): array
 {
     if (!function_exists('curl_init')) {
-        throw new RuntimeException('서버에 cURL이 없어 Bitly API를 호출할 수 없습니다.');
+        throw new RuntimeException('서버에 cURL이 없어 is.gd API를 호출할 수 없습니다.');
     }
-    $body = $payload === null ? null : json_encode($payload, JSON_UNESCAPED_SLASHES);
-    if ($payload !== null && !is_string($body)) {
-        throw new RuntimeException('Bitly 요청을 만들 수 없습니다.');
-    }
-    $curl = curl_init(ROSSI_BITLY_API_BASE . $path);
+    $curl = curl_init(ROSSI_ISGD_API_URL);
     if ($curl === false) {
-        throw new RuntimeException('Bitly 연결을 시작할 수 없습니다.');
+        throw new RuntimeException('is.gd 연결을 시작할 수 없습니다.');
     }
     curl_setopt_array($curl, [
-        CURLOPT_CUSTOMREQUEST => $method,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => http_build_query(['format' => 'json', 'url' => $url], '', '&', PHP_QUERY_RFC3986),
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_CONNECTTIMEOUT => 8,
         CURLOPT_TIMEOUT => 15,
-        CURLOPT_HTTPHEADER => ['Authorization: Bearer ' . rossi_bitly_token(), 'Content-Type: application/json', 'Accept: application/json'],
+        CURLOPT_HTTPHEADER => ['Accept: application/json'],
     ]);
-    if ($body !== null) {
-        curl_setopt($curl, CURLOPT_POSTFIELDS, $body);
-    }
     $response = curl_exec($curl);
     $status = (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
     $error = curl_error($curl);
     curl_close($curl);
-    if ($response === false || $status < 200 || $status >= 300) {
-        if ($status === 401 || $status === 403) {
-            throw new RuntimeException('Bitly 인증에 실패했습니다. API 토큰을 다시 설정해 주세요.');
-        }
-        throw new RuntimeException($error !== '' ? 'Bitly 연결에 실패했습니다.' : 'Bitly API가 요청을 처리하지 못했습니다. (HTTP ' . $status . ')');
-    }
     $decoded = json_decode((string) $response, true);
-    return is_array($decoded) ? $decoded : [];
+    if ($response === false || !is_array($decoded) || $status < 200 || $status >= 300) {
+        if (is_array($decoded) && (int) ($decoded['errorcode'] ?? 0) === 3) {
+            throw new RuntimeException('is.gd 호출 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.');
+        }
+        throw new RuntimeException($error !== '' ? 'is.gd 연결에 실패했습니다.' : 'is.gd API가 요청을 처리하지 못했습니다. (HTTP ' . $status . ')');
+    }
+    if (isset($decoded['errorcode'])) {
+        throw new RuntimeException('is.gd가 URL을 압축하지 못했습니다: ' . (string) ($decoded['errormessage'] ?? '입력 URL을 확인해 주세요.'));
+    }
+    return $decoded;
 }
 
 function rossi_short_links_list(): array
@@ -244,10 +217,10 @@ function rossi_short_links_create(string $value): array
     try {
         $existing = rossi_short_links_read_unlocked($paths['data']);
         if (count($existing) >= ROSSI_SHORT_LINK_LIMIT) {
-            throw new RuntimeException('저장 가능한 단축 URL 500개를 모두 사용했습니다. 기존 항목을 삭제해 주세요.');
+            throw new RuntimeException('저장 가능한 단축 URL 5,000개를 모두 사용했습니다. 기존 항목을 삭제해 주세요.');
         }
         foreach ($existing as $link) {
-            if (($link['provider'] ?? '') === 'bitly' && ($link['url'] ?? '') === $url) {
+            if (in_array(($link['provider'] ?? ''), ['bitly', 'isgd'], true) && ($link['url'] ?? '') === $url) {
                 return ['link' => $link, 'created' => false];
             }
         }
@@ -255,22 +228,22 @@ function rossi_short_links_create(string $value): array
         rossi_short_links_close_lock($lock);
     }
 
-    $bitly = rossi_bitly_request('POST', '/shorten', ['long_url' => $url, 'domain' => 'bit.ly']);
-    $id = (string) ($bitly['id'] ?? '');
-    $shortUrl = (string) ($bitly['link'] ?? '');
-    if ($id === '' || filter_var($shortUrl, FILTER_VALIDATE_URL) === false) {
-        throw new RuntimeException('Bitly가 올바른 단축 URL을 반환하지 않았습니다.');
+    $isgd = rossi_isgd_shorten($url);
+    $shortUrl = (string) ($isgd['shorturl'] ?? '');
+    if (filter_var($shortUrl, FILTER_VALIDATE_URL) === false) {
+        throw new RuntimeException('is.gd가 올바른 단축 URL을 반환하지 않았습니다.');
     }
-    $link = ['id' => $id, 'provider' => 'bitly', 'short_url' => $shortUrl, 'url' => $url, 'created_at' => gmdate('c')];
+    $id = $shortUrl;
+    $link = ['id' => $id, 'provider' => 'isgd', 'short_url' => $shortUrl, 'url' => $url, 'created_at' => gmdate('c')];
     $lock = rossi_short_links_open_lock($paths, LOCK_EX);
     try {
         $links = rossi_short_links_read_unlocked($paths['data']);
         foreach ($links as $saved) {
-            if (($saved['provider'] ?? '') === 'bitly' && ($saved['id'] ?? '') === $id) {
+            if (($saved['provider'] ?? '') === 'isgd' && ($saved['id'] ?? '') === $id) {
                 return ['link' => $saved, 'created' => false];
             }
         }
-        $links['bitly:' . $id] = $link;
+        $links['isgd:' . hash('sha256', $id)] = $link;
         rossi_short_links_write_unlocked($paths['data'], $links);
     } finally {
         rossi_short_links_close_lock($lock);
@@ -295,9 +268,6 @@ function rossi_short_links_delete(string $id): bool
         }
         if ($storageKey === null || !is_array($link)) {
             return false;
-        }
-        if (($link['provider'] ?? '') === 'bitly') {
-            rossi_bitly_request('DELETE', '/bitlinks/' . rawurlencode((string) $link['id']));
         }
         unset($links[$storageKey]);
         rossi_short_links_write_unlocked($paths['data'], $links);

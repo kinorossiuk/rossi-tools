@@ -24,7 +24,7 @@ if (($auth['status'] ?? '') !== 'authenticated') {
 $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
 try {
     if ($method === 'GET') {
-        rossi_short_links_respond(['links' => rossi_short_links_list(), 'bitly_configured' => rossi_bitly_is_configured()]);
+        rossi_short_links_respond(['links' => rossi_short_links_list()]);
     }
     if ($method !== 'POST') {
         header('Allow: GET, POST');
