@@ -220,7 +220,7 @@ function rossi_short_links_create(string $value): array
             throw new RuntimeException('저장 가능한 단축 URL 5,000개를 모두 사용했습니다. 기존 항목을 삭제해 주세요.');
         }
         foreach ($existing as $link) {
-            if (in_array(($link['provider'] ?? ''), ['bitly', 'isgd'], true) && ($link['url'] ?? '') === $url) {
+            if (($link['provider'] ?? '') === 'isgd' && ($link['url'] ?? '') === $url) {
                 return ['link' => $link, 'created' => false];
             }
         }
