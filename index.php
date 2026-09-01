@@ -45,7 +45,9 @@ function e(string $value): string
     .ghost { margin:0; border:1px solid var(--line); background:transparent; color:var(--muted); padding:.65rem .85rem; cursor:pointer; }
     .hero { padding:clamp(4rem,9vw,8rem) 0 4rem; display:grid; grid-template-columns:1fr auto; align-items:end; gap:2rem; }
     .kicker,.mark { color:var(--acid); font:700 .72rem/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.13em; }
-    .hero h1,.tool-view h1 { margin:.9rem 0 1rem; font-size:clamp(3.5rem,9vw,7.5rem); line-height:.87; letter-spacing:-.085em; }
+    .hero h1,.tool-view h1 { margin:.9rem 0 1rem; line-height:.87; letter-spacing:-.085em; }
+    .hero h1 { font-size:clamp(2.75rem,6vw,5rem); }
+    .tool-view h1 { font-size:clamp(3.5rem,9vw,7.5rem); }
     .hero-copy { max-width:34rem; color:var(--muted); font-size:1rem; line-height:1.7; }
     .tool-count { min-width:108px; padding:1rem; border:1px solid var(--line); color:var(--muted); font:.72rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
     .tool-count strong { display:block; color:var(--text); font-size:2rem; line-height:1; margin-bottom:.45rem; }
