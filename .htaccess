@@ -9,6 +9,9 @@ LimitRequestBody 32768
 
 <IfModule mod_rewrite.c>
   RewriteEngine On
+  # Keep the hosting provider's default hostname and arbitrary Host headers out.
+  RewriteCond %{HTTP_HOST} !^(?:www\.)?rossiuk\.xyz(?::[0-9]+)?$ [NC]
+  RewriteRule ^ - [F,L]
   RewriteCond %{HTTPS} !=on
   RewriteRule ^ https://rossiuk.xyz%{REQUEST_URI} [R=301,L]
   RewriteCond %{REQUEST_URI} "(?i)(?:^|/)(?:\.env(?:[./]|$)|\.git(?:/|$)|\.svn(?:/|$)|\.hg(?:/|$)|\.aws(?:/|$)|\.ssh(?:/|$)|app(?:/|$)|config(?:\.(?:php|json|ini|ya?ml|bak|old)|/|$)|wp-admin(?:/|$)|wp-login\.php|xmlrpc\.php|vendor/phpunit(?:/|$)|phpmyadmin(?:/|$)|adminer(?:\.php)?|server-status|actuator(?:/|$)|backup(?:/|$)|database\.sql)"
