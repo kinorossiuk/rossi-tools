@@ -1349,7 +1349,7 @@
     const count = Number(contactCount.value);
     const countryCode = contactCountry.value;
     const { config, prefix } = validateContactPrefix();
-    if (!Number.isInteger(count) || count < 1 || count > 1000) throw new Error('연락처 수는 1~1,000개로 입력해 주세요.');
+    if (!Number.isInteger(count) || count < 1 || count > 10000) throw new Error('연락처 수는 1~10,000개로 입력해 주세요.');
     if (!config.prefixPattern.test(prefix)) throw new Error(config.prefixHint);
     return Array.from({ length: count }, (_, index) => {
       const number = buildCountryPhone(countryCode, config, prefix, index);
