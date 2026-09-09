@@ -19,6 +19,7 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
     <button class="is-active" type="button" role="tab" aria-selected="true" aria-controls="file-panel" id="file-tab" data-tab="file">용량별 파일</button>
     <button type="button" role="tab" aria-selected="false" aria-controls="message-panel" id="message-tab" data-tab="message">문자·이모지</button>
     <button type="button" role="tab" aria-selected="false" aria-controls="contact-panel" id="contact-tab" data-tab="contact">더미 연락처</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="portrait-panel" id="portrait-tab" data-tab="portrait">인물 사진</button>
   </div>
 
   <section class="test-panel" id="file-panel" role="tabpanel" aria-labelledby="file-tab" data-panel="file">
@@ -139,9 +140,25 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
       <p class="test-status" id="contact-status" role="status" aria-live="polite">국가별 국내 형식과 E.164 국제번호를 함께 생성합니다. 실제 발송에는 사용하지 마세요.</p>
     </form>
   </section>
+
+  <section class="test-panel" id="portrait-panel" role="tabpanel" aria-labelledby="portrait-tab" data-panel="portrait" hidden>
+    <form class="test-form" id="portrait-form">
+      <label>생성 구성
+        <select id="portrait-preset"><option value="sample">샘플: 3명 × 5장 (15장)</option><option value="full">전체: 20명 × 10장 (200장)</option></select>
+      </label>
+      <label>이미지 형식 <input value="512 × 512 JPG" readonly aria-readonly="true"></label>
+      <div class="portrait-summary wide-field" id="portrait-summary" aria-live="polite"></div>
+      <p class="test-hint wide-field">같은 인물은 얼굴 특징을 유지하고 표정·옷·배경만 달리합니다. ZIP에는 무작위 파일명의 JPG만 넣고, 정답 그룹은 이 브라우저에서만 확인합니다.</p>
+      <div class="portrait-preview wide-field" id="portrait-preview" aria-live="polite"><p>아직 생성한 인물 사진이 없습니다.</p></div>
+      <div class="test-actions wide-field"><button class="primary" id="portrait-generate" type="submit">인물 사진 만들기</button><button class="ghost" id="portrait-cancel" type="button" disabled>생성 취소</button><button class="ghost" id="portrait-download" type="button" disabled>JPG ZIP 다운로드</button><button class="ghost" id="portrait-groups" type="button" disabled>정답 그룹 보기</button><button class="ghost" id="portrait-reset" type="button">인물 생성 이력 초기화</button></div>
+      <section class="portrait-groups wide-field" id="portrait-groups-output" hidden aria-labelledby="portrait-groups-title"><h2 id="portrait-groups-title">정답 그룹</h2><div id="portrait-groups-list"></div></section>
+      <p class="test-status" id="portrait-status" role="status" aria-live="polite">샘플 15장으로 카나나의 같은 인물 묶기 결과를 먼저 확인하세요.</p>
+    </form>
+  </section>
 </section>
 <script defer src="/static/vendor/qrcode-generator.js"></script>
 <script defer src="/static/vendor/text-to-doc.js"></script>
 <script defer src="/static/vendor/js-hwp.min.js"></script>
 <script defer src="/static/vendor/js-hwpx.min.js"></script>
 <script defer src="/static/test-data.js?v=<?= htmlspecialchars($testDataJsVersion, ENT_QUOTES, 'UTF-8') ?>"></script>
+<script defer src="/static/portrait-generator.js?v=<?= htmlspecialchars((string) (filemtime(__DIR__ . '/../static/portrait-generator.js') ?: '1'), ENT_QUOTES, 'UTF-8') ?>"></script>
