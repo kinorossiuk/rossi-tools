@@ -57,9 +57,12 @@
 .emoji-option:hover,.emoji-option:focus-visible{border-color:var(--acid);background:var(--surface);outline:0}
 .emoji-empty{margin:.75rem 0 0;color:var(--muted);font-size:.75rem}
 .contact-preview{overflow:auto;max-height:300px;border:1px solid var(--line);background:#0c0e0c}
+.contact-name-state{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.85rem;border:1px solid var(--line);background:#0c0e0c}
+.contact-name-state span{color:var(--acid);font:.72rem/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}
+.contact-name-state .ghost{margin:0;white-space:nowrap}
 .contact-preview table{width:100%;border-collapse:collapse;font-size:.78rem}
 .contact-preview th,.contact-preview td{padding:.7rem;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
 .contact-preview th{background:var(--surface-2);color:var(--acid);font-weight:650}
 .contact-preview td{color:var(--muted)}
 .contact-preview tbody tr:hover td{background:var(--surface-2);color:var(--text)}
-@media(max-width:760px){.test-tabs{overflow:auto}.test-tabs button{flex:0 0 auto;white-space:nowrap}.test-form{grid-template-columns:1fr}.message-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.emoji-controls{grid-template-columns:1fr}.emoji-controls .ghost{width:100%}.test-actions{flex-wrap:wrap}}
+@media(max-width:760px){.test-tabs{overflow:auto}.test-tabs button{flex:0 0 auto;white-space:nowrap}.test-form{grid-template-columns:1fr}.message-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}.emoji-controls{grid-template-columns:1fr}.emoji-controls .ghost{width:100%}.test-actions{flex-wrap:wrap}.contact-name-state{align-items:flex-start;flex-direction:column}.contact-name-state .ghost{width:100%}}

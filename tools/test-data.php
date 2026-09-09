@@ -124,7 +124,15 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
           <option value="KR">대한민국 (+82)</option><option value="US">미국 (+1)</option><option value="CA">캐나다 (+1)</option><option value="GB">영국 (+44)</option><option value="JP">일본 (+81)</option><option value="AU">호주 (+61)</option><option value="SG">싱가포르 (+65)</option><option value="DE">독일 (+49)</option><option value="FR">프랑스 (+33)</option><option value="IN">인도 (+91)</option><option value="ID">인도네시아 (+62)</option><option value="TR">튀르키예 (+90)</option><option value="TM">투르크메니스탄 (+993)</option>
         </select>
       </label>
-      <label>전화번호 시작값 <input id="contact-prefix" value="010" maxlength="5" required inputmode="numeric" autocomplete="off"><span id="contact-prefix-hint">대한민국 휴대전화 형식: 010</span></label>
+      <label>전화번호 시작값 <input id="contact-prefix" value="010" maxlength="5" required inputmode="numeric" autocomplete="off"><span id="contact-prefix-hint">대한민국 테스트 번호 형식: 010 또는 014</span></label>
+      <label>이름 형식
+        <select id="contact-name-mode"><option value="combined">국가별 조합 이름 + 무작위 순번</option><option value="simple">테스트 연락처 + 무작위 순번</option></select>
+      </label>
+      <div class="contact-name-state wide-field">
+        <span id="contact-name-state" role="status" aria-live="polite"></span>
+        <button class="ghost" id="contact-name-reset" type="button">이름 사용 이력 초기화</button>
+      </div>
+      <p class="test-hint wide-field">전체 순번 후보를 무작위 순서로 사용합니다. 이력 초기화 전까지 다음 생성에서도 같은 이름을 만들지 않습니다.</p>
       <label class="wide-field">미리보기</label>
       <div class="contact-preview wide-field" id="contact-preview" aria-live="polite"></div>
       <div class="test-actions"><button class="primary" type="submit">연락처 만들기</button><button class="ghost" id="contact-csv" type="button" disabled>CSV 다운로드</button></div>

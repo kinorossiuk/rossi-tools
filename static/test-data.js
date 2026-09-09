@@ -48,8 +48,11 @@
   const contactCountry = root.querySelector('#contact-country');
   const contactPrefix = root.querySelector('#contact-prefix');
   const contactPrefixHint = root.querySelector('#contact-prefix-hint');
+  const contactNameMode = root.querySelector('#contact-name-mode');
   const contactPreview = root.querySelector('#contact-preview');
   const contactCsv = root.querySelector('#contact-csv');
+  const contactNameState = root.querySelector('#contact-name-state');
+  const contactNameReset = root.querySelector('#contact-name-reset');
   const contactStatus = root.querySelector('#contact-status');
   const maxBytes = 300 * 1024 * 1024;
   const webmBitrate = 12_000_000;
@@ -1254,7 +1257,7 @@
   if (!graphemeSegmenter) setStatus(messageStatus, '이 브라우저는 화면 글자 분리를 지원하지 않아 코드 포인트 기준으로 대신 계산합니다.', true);
 
   const contactCountries = {
-    KR: { label: '대한민국', callingCode: '82', defaultPrefix: '010', prefixPattern: /^010$/, prefixHint: '대한민국 휴대전화 형식: 010', nationalPattern: /^010\d{8}$/, names: ['김민준', '이서연', '박도윤', '최지우', '정하준', '강서윤'] },
+    KR: { label: '대한민국', callingCode: '82', defaultPrefix: '010', prefixPattern: /^01[04]$/, prefixHint: '대한민국 테스트 번호 형식: 010 또는 014', nationalPattern: /^01[04]\d{8}$/, names: ['김민준', '이서연', '박도윤', '최지우', '정하준', '강서윤'] },
     US: { label: '미국', callingCode: '1', defaultPrefix: '202', prefixPattern: /^[2-9]\d{2}$/, prefixHint: '미국 지역번호: 2~9로 시작하는 숫자 3자리 (예: 202)', nationalPattern: /^[2-9]\d{2}555\d{4}$/, names: ['Alex Morgan', 'Jordan Lee', 'Taylor Smith', 'Casey Brown', 'Riley Davis', 'Jamie Wilson'] },
     CA: { label: '캐나다', callingCode: '1', defaultPrefix: '416', prefixPattern: /^[2-9]\d{2}$/, prefixHint: '캐나다 지역번호: 2~9로 시작하는 숫자 3자리 (예: 416)', nationalPattern: /^[2-9]\d{2}555\d{4}$/, names: ['Avery Martin', 'Quinn Roy', 'Morgan Clark', 'Cameron Lewis', 'Rowan Scott', 'Parker Young'] },
     GB: { label: '영국', callingCode: '44', defaultPrefix: '07700', prefixPattern: /^07\d{3}$/, prefixHint: '영국 모바일 시작값: 07로 시작하는 숫자 5자리 (예: 07700)', nationalPattern: /^07\d{9}$/, names: ['Oliver Taylor', 'Amelia Jones', 'George Evans', 'Isla Thomas', 'Harry Walker', 'Mia Harris'] },
@@ -1267,6 +1270,157 @@
     ID: { label: '인도네시아', callingCode: '62', defaultPrefix: '0812', prefixPattern: /^08[1-9]\d$/, prefixHint: '인도네시아 모바일 시작값: 081x~089x (예: 0812)', nationalPattern: /^08[1-9]\d{7,9}$/, names: ['Budi Santoso', 'Siti Aisyah', 'Andi Pratama', 'Dewi Lestari', 'Rizky Hidayat', 'Putri Maharani'] },
     TR: { label: '튀르키예', callingCode: '90', defaultPrefix: '0532', prefixPattern: /^05\d{2}$/, prefixHint: '튀르키예 모바일 시작값: 05로 시작하는 숫자 4자리 (예: 0532)', nationalPattern: /^05\d{9}$/, names: ['Ahmet Yılmaz', 'Ayşe Kaya', 'Mehmet Demir', 'Elif Şahin', 'Can Aydın', 'Zeynep Arslan'] },
     TM: { label: '투르크메니스탄', callingCode: '993', defaultPrefix: '72', prefixPattern: /^(6[1-5]|7[12])$/, prefixHint: '투르크메니스탄 모바일 시작값: 61~65, 71 또는 72 (예: 72)', nationalPattern: /^(6[1-5]|7[12])\d{6}$/, names: ['Aman Döwletov', 'Aşgabat Mämmedowa', 'Türkmenistanyň Berdiýew', 'Gülşat Orazowa', 'Serdar Annanýazow', 'Aýna Jumaýewa'] },
+  };
+
+  const contactNameTags = {
+    KR: ['테스트', '검증', '샘플', '데모', '가상', 'QA'],
+    JP: ['テスト', '検証', 'サンプル', 'デモ', '仮想', 'QA'],
+    default: ['Test', 'Validation', 'Sample', 'Demo', 'Mock', 'QA'],
+  };
+  const contactNameStateKey = 'rossi-test-data-contact-names-v3';
+  const previousContactNameStateKey = 'rossi-test-data-contact-names-v2';
+  const legacyContactNameStateKey = 'rossi-test-data-contact-names-v1';
+  const contactNameCapacity = 1_000_000;
+  const contactNamePermutationSize = 1 << 20;
+
+  const createContactNameState = () => ({
+    version: 3,
+    nextIndex: 0,
+    assignedCount: 0,
+    skippedCount: 0,
+    excludedThrough: 0,
+    permutationKey: randomIndex(0x1_0000_0000) >>> 0,
+  });
+
+  const readSavedContactNameState = (key) => {
+    let saved;
+    try { saved = window.localStorage.getItem(key); }
+    catch (_) { throw new Error('이름 중복을 막으려면 브라우저 저장소를 사용할 수 있어야 합니다.'); }
+    if (saved === null) return null;
+    try { return JSON.parse(saved); }
+    catch (_) { throw new Error('이름 사용 이력을 읽을 수 없습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.'); }
+  };
+
+  const readLegacyContactNameCount = () => {
+    const legacy = readSavedContactNameState(legacyContactNameStateKey);
+    if (legacy === null) return 0;
+    if (Number.isInteger(legacy.nextSequence) && legacy.nextSequence >= 1 && legacy.nextSequence <= contactNameCapacity + 1) return legacy.nextSequence - 1;
+    throw new Error('이전 이름 사용 이력을 읽을 수 없습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.');
+  };
+
+  const readContactNameState = () => {
+    const saved = readSavedContactNameState(contactNameStateKey);
+    if (saved !== null) {
+      const skippedCount = saved.skippedCount ?? saved.nextIndex - saved.assignedCount;
+      if (saved?.version === 3
+        && Number.isInteger(saved.nextIndex) && saved.nextIndex >= 0 && saved.nextIndex <= contactNameCapacity
+        && Number.isInteger(saved.assignedCount) && saved.assignedCount >= 0 && saved.assignedCount <= saved.nextIndex
+        && Number.isInteger(skippedCount) && skippedCount >= 0 && skippedCount <= saved.excludedThrough
+        && saved.nextIndex === saved.assignedCount + skippedCount
+        && Number.isInteger(saved.excludedThrough) && saved.excludedThrough >= 0 && saved.excludedThrough <= contactNameCapacity
+        && saved.assignedCount + saved.excludedThrough <= contactNameCapacity
+        && Number.isInteger(saved.permutationKey) && saved.permutationKey >= 0 && saved.permutationKey <= 0xffff_ffff) return { ...saved, skippedCount };
+      throw new Error('이름 사용 이력을 읽을 수 없습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.');
+    }
+
+    const excludedThrough = readLegacyContactNameCount();
+    const previous = readSavedContactNameState(previousContactNameStateKey);
+    if (previous === null) {
+      const state = { ...createContactNameState(), excludedThrough };
+      writeContactNameState(state);
+      return state;
+    }
+    try {
+      if (previous?.version !== 2
+        || !Number.isInteger(previous.nextIndex) || previous.nextIndex < 0 || previous.nextIndex > contactNameCapacity
+        || !Number.isInteger(previous.permutationKey) || previous.permutationKey < 0 || previous.permutationKey > 0xffff_ffff) throw new Error();
+      let assignedCount = 0;
+      for (let index = 0; index < previous.nextIndex; index += 1) {
+        if (contactNameSequenceAt(index, previous.permutationKey) > excludedThrough) assignedCount += 1;
+      }
+      const state = { version: 3, nextIndex: previous.nextIndex, assignedCount, skippedCount: previous.nextIndex - assignedCount, excludedThrough, permutationKey: previous.permutationKey };
+      writeContactNameState(state);
+      return state;
+    } catch (error) {
+      if (error instanceof Error && error.message) throw error;
+      throw new Error('이전 이름 사용 이력을 읽을 수 없습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.');
+    }
+  };
+
+  const writeContactNameState = (state) => {
+    try { window.localStorage.setItem(contactNameStateKey, JSON.stringify(state)); }
+    catch (_) { throw new Error('이름 사용 이력을 저장하지 못했습니다. 중복을 막기 위해 연락처를 만들지 않았습니다.'); }
+  };
+
+  const updateContactNameState = () => {
+    try {
+      const state = readContactNameState();
+      const used = state.assignedCount + state.excludedThrough;
+      contactNameState.textContent = `이름 사용 ${used.toLocaleString('ko-KR')}개 · 남은 이름 ${(contactNameCapacity - used).toLocaleString('ko-KR')}개`;
+    } catch (error) {
+      contactNameState.textContent = error instanceof Error ? error.message : '이름 사용 이력을 읽을 수 없습니다.';
+    }
+  };
+
+  const contactNameRound = (value, key, round) => {
+    let mixed = (value ^ ((key + Math.imul(round + 1, 0x9e37_79b9)) >>> 0)) >>> 0;
+    mixed = Math.imul(mixed ^ (mixed >>> 16), 0x45d9_f3b) >>> 0;
+    mixed = Math.imul(mixed ^ (mixed >>> 16), 0x45d9_f3b) >>> 0;
+    return (mixed ^ (mixed >>> 16)) & 0x3ff;
+  };
+
+  const permuteContactNameIndex = (index, key) => {
+    let left = index >>> 10;
+    let right = index & 0x3ff;
+    for (let round = 0; round < 4; round += 1) {
+      [left, right] = [right, left ^ contactNameRound(right, key, round)];
+    }
+    return ((left << 10) | right) & (contactNamePermutationSize - 1);
+  };
+
+  const contactNameSequenceAt = (index, key) => {
+    let permuted = index;
+    do { permuted = permuteContactNameIndex(permuted, key); }
+    while (permuted >= contactNameCapacity);
+    return permuted + 1;
+  };
+
+  const reserveContactNameSequences = (count) => {
+    const state = readContactNameState();
+    const remaining = contactNameCapacity - state.assignedCount - state.excludedThrough;
+    if (count > remaining) throw new Error(`중복 없이 만들 수 있는 이름이 ${remaining.toLocaleString('ko-KR')}개 남았습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.`);
+    const sequences = [];
+    let nextIndex = state.nextIndex;
+    let skippedCount = state.skippedCount;
+    while (sequences.length < count) {
+      if (nextIndex >= contactNameCapacity) throw new Error('이름 순번 사용 이력이 올바르지 않습니다. 이름 사용 이력 초기화 후 다시 시도해 주세요.');
+      const sequence = contactNameSequenceAt(nextIndex, state.permutationKey);
+      nextIndex += 1;
+      if (sequence > state.excludedThrough) sequences.push(sequence);
+      else skippedCount += 1;
+    }
+    writeContactNameState({ ...state, nextIndex, assignedCount: state.assignedCount + count, skippedCount });
+    return sequences;
+  };
+
+  const combineContactName = (countryCode, names, sequence) => {
+    const first = names[sequence % names.length];
+    const second = names[Math.floor(sequence / names.length) % names.length];
+    if (countryCode === 'KR') return `${first.slice(0, 1)}${second.slice(1)}`;
+    const firstSpace = first.indexOf(' ');
+    const secondSpace = second.indexOf(' ');
+    if (firstSpace < 0 || secondSpace < 0) return first;
+    return `${first.slice(0, firstSpace)} ${second.slice(secondSpace + 1)}`;
+  };
+
+  const buildContactName = (countryCode, config, sequence, mode) => {
+    const serial = String(sequence).padStart(6, '0');
+    if (mode === 'simple') return `${countryCode} Test Contact ${serial}`;
+    const tags = contactNameTags[countryCode] || contactNameTags.default;
+    const baseName = combineContactName(countryCode, config.names, sequence);
+    const combinationCount = config.names.length * config.names.length;
+    const tag = tags[Math.floor(sequence / combinationCount) % tags.length];
+    return `${baseName} ${tag} ${serial}`;
   };
 
   const serialDigits = (base, index, length) => String(base + index).padStart(length, '0').slice(-length);
@@ -1351,11 +1505,12 @@
     const { config, prefix } = validateContactPrefix();
     if (!Number.isInteger(count) || count < 1 || count > 10000) throw new Error('연락처 수는 1~10,000개로 입력해 주세요.');
     if (!config.prefixPattern.test(prefix)) throw new Error(config.prefixHint);
-    return Array.from({ length: count }, (_, index) => {
-      const number = buildCountryPhone(countryCode, config, prefix, index);
+    const phoneNumbers = Array.from({ length: count }, (_, index) => buildCountryPhone(countryCode, config, prefix, index));
+    const nameSequences = reserveContactNameSequences(count);
+    return phoneNumbers.map((number, index) => {
       return {
         country: `${config.label} (+${config.callingCode})`,
-        name: config.names[index % config.names.length],
+        name: buildContactName(countryCode, config, nameSequences[index], contactNameMode.value),
         phone: number.phone,
         e164: number.e164,
         email: `test.${countryCode.toLowerCase()}.${String(index + 1).padStart(4, '0')}@example.test`,
@@ -1378,10 +1533,20 @@
 
   contactCountry.addEventListener('change', updateContactCountry);
   contactPrefix.addEventListener('input', validateContactPrefix);
+  contactNameReset.addEventListener('click', () => {
+    try {
+      window.localStorage.removeItem(contactNameStateKey);
+      window.localStorage.removeItem(previousContactNameStateKey);
+      window.localStorage.removeItem(legacyContactNameStateKey);
+      updateContactNameState();
+      setStatus(contactStatus, '이름 사용 이력을 초기화했습니다. 이제 이전 이름도 다시 만들 수 있습니다.');
+    } catch (_) { setStatus(contactStatus, '이름 사용 이력을 초기화하지 못했습니다.', true); }
+  });
   updateContactCountry();
+  updateContactNameState();
   contactForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    try { contacts = makeContacts(); showContacts(contacts); contactCsv.disabled = false; setStatus(contactStatus, `${selectedContactCountry().label} 형식의 가상 연락처 ${contacts.length.toLocaleString('ko-KR')}개를 만들었습니다. 국내 형식과 E.164 번호를 검증했으며, 미리보기는 최대 50개입니다.`); }
+    try { contacts = makeContacts(); showContacts(contacts); contactCsv.disabled = false; updateContactNameState(); setStatus(contactStatus, `${selectedContactCountry().label} 형식의 가상 연락처 ${contacts.length.toLocaleString('ko-KR')}개를 만들었습니다. 국내 형식과 E.164 번호를 검증했으며, 미리보기는 최대 50개입니다.`); }
     catch (error) { setStatus(contactStatus, error instanceof Error ? error.message : '연락처를 만들지 못했습니다.', true); }
   });
   contactCsv.addEventListener('click', () => {
