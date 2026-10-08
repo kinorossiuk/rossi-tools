@@ -1554,8 +1554,14 @@
   contactCsv.addEventListener('click', () => {
     if (contacts.length === 0) return;
     const quote = (value) => `"${value.replace(/"/g, '""')}"`;
-    const rows = [['국가', '이름', '국내 형식', 'E.164 국제번호', '이메일', '회사'], ...contacts.map((item) => [item.country, item.name, item.phone, item.e164, item.email, item.company])];
+    // Google Contacts requires its template headers to map imported fields.
+    const rows = [
+      ['First Name', 'Phone 1 - Label', 'Phone 1 - Value', 'Email 1 - Label', 'Email 1 - Value', 'Organization Name', 'Notes'],
+      ...contacts.map((item) => [item.name, 'Mobile', item.e164, 'Work', item.email, item.company, `국가: ${item.country}\n국내 형식: ${item.phone}`]),
+    ];
     download(new Blob(['\uFEFF', rows.map((row) => row.map(quote).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'rossi-dummy-contacts.csv');
-    setStatus(contactStatus, 'CSV 파일을 내려받았습니다.');
+    setStatus(contactStatus, contacts.length > 3000
+      ? '구글 주소록용 CSV 파일을 내려받았습니다. 구글 주소록은 한 번에 최대 3,000개를 가져올 수 있으므로 파일을 나눠 가져와 주세요.'
+      : '구글 주소록용 CSV 파일을 내려받았습니다. 구글 주소록의 가져오기에서 이 파일을 선택하세요.');
   });
 })();

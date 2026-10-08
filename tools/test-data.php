@@ -136,7 +136,8 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
       <p class="test-hint wide-field">전체 순번 후보를 무작위 순서로 사용합니다. 이력 초기화 전까지 다음 생성에서도 같은 이름을 만들지 않습니다.</p>
       <label class="wide-field">미리보기</label>
       <div class="contact-preview wide-field" id="contact-preview" aria-live="polite"></div>
-      <div class="test-actions"><button class="primary" type="submit">연락처 만들기</button><button class="ghost" id="contact-csv" type="button" disabled>CSV 다운로드</button></div>
+      <div class="test-actions"><button class="primary" type="submit">연락처 만들기</button><button class="ghost" id="contact-csv" type="button" disabled>구글 주소록 CSV 다운로드</button></div>
+      <p class="test-hint wide-field">CSV는 구글 주소록 가져오기용 헤더를 사용하며, 전화번호는 국가코드가 포함된 E.164 형식으로 저장합니다. 국가와 국내 표시 번호는 메모에 포함합니다. 구글 주소록은 한 번에 최대 3,000개까지 가져올 수 있습니다.</p>
       <p class="test-status" id="contact-status" role="status" aria-live="polite">국가별 국내 형식과 E.164 국제번호를 함께 생성합니다. 실제 발송에는 사용하지 마세요.</p>
     </form>
   </section>
