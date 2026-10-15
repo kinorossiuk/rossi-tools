@@ -47,8 +47,9 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
         </select>
       </label>
       <label>목표 용량
-        <div class="size-input"><input id="file-size" name="size" type="number" min="1" max="300" value="1" required inputmode="decimal"><select id="file-unit" name="unit"><option value="MiB">MiB</option><option value="MB">MB</option></select></div>
+        <div class="size-input"><input id="file-size" name="size" type="number" min="0.1" max="300" step="0.1" value="1" required inputmode="decimal" aria-describedby="file-size-help"><select id="file-unit" name="unit" aria-label="용량 단위"><option value="MiB">MiB</option><option value="MB">MB</option><option value="KiB">KiB</option><option value="KB">KB</option></select></div>
       </label>
+      <p class="test-hint" id="file-size-help">소수점 한 자리까지 입력할 수 있습니다 (예: 27.7 KB = 27,700 bytes). 1 KB = 1,000 bytes · 1 KiB = 1,024 bytes이며 소수 바이트는 반올림합니다. 파일 형식과 이미지 크기에 따라 생성 가능한 최소 용량이 다릅니다.</p>
       <label>파일명
         <input id="file-name" name="name" maxlength="60" value="test-file" required>
       </label>

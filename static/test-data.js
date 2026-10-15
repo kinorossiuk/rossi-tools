@@ -55,6 +55,7 @@
   const contactNameReset = root.querySelector('#contact-name-reset');
   const contactStatus = root.querySelector('#contact-status');
   const maxBytes = 300 * 1024 * 1024;
+  const unitBytes = { KB: 1000, KiB: 1024, MB: 1000 * 1000, MiB: 1024 * 1024 };
   const webmBitrate = 12_000_000;
   let contacts = [];
   let messageQrParts = [];
@@ -308,7 +309,9 @@
   };
 
   const makePdf = (target, pattern, patternIndex, generatedTitle) => {
-    let padding = Math.max(0, target - 800);
+    const minimum = buildPdf(0, pattern, patternIndex, target, generatedTitle).length;
+    if (target < minimum) throw new Error(`선택한 용량이 PDF 최소 크기(${formatBytes(minimum)})보다 작습니다.`);
+    let padding = 0;
     for (let attempts = 0; attempts < 8; attempts += 1) {
       const output = buildPdf(padding, pattern, patternIndex, target, generatedTitle);
       const difference = target - output.length;
@@ -870,8 +873,11 @@
 
   const targetBytes = () => {
     const size = Number(fileSize.value);
-    if (!Number.isFinite(size) || size < 1) throw new Error('용량은 1 이상으로 입력해 주세요.');
-    const bytes = Math.round(size * (fileUnit.value === 'MiB' ? 1024 * 1024 : 1000 * 1000));
+    if (!Number.isFinite(size) || size < 0.1) throw new Error('용량은 0.1 이상으로 입력해 주세요.');
+    if (Math.abs(size * 10 - Math.round(size * 10)) > 1e-8) throw new Error('용량은 소수점 한 자리까지 입력해 주세요.');
+    const multiplier = unitBytes[fileUnit.value];
+    if (!multiplier) throw new Error('지원하는 용량 단위를 선택해 주세요.');
+    const bytes = Math.round(size * multiplier);
     if (bytes > maxBytes) throw new Error(`한 번에 최대 ${formatBytes(maxBytes)}까지만 만들 수 있습니다.`);
     return bytes;
   };
@@ -880,7 +886,7 @@
     const isImage = ['png', 'jpg', 'gif', 'psd', 'tif'].includes(fileKind.value);
     const isVideo = fileKind.value === 'webm' || fileKind.value === 'mp4';
     imageOption.hidden = !isImage;
-    fileSize.max = '300';
+    fileSize.max = String(Math.floor(maxBytes * 10 / unitBytes[fileUnit.value]) / 10);
     fileHint.textContent = fileKind.value === 'mp4'
       ? '지원 브라우저에서는 생성 날짜·시간(KST)을 화면 제목으로 직접 녹화하고, 10가지 테스트 사운드 중 하나를 무작위로 넣습니다.'
       : fileKind.value === 'ppt'
@@ -896,6 +902,7 @@
   }));
 
   fileKind.addEventListener('change', updateFileOptions);
+  fileUnit.addEventListener('change', updateFileOptions);
   updateFileOptions();
 
   fileForm.addEventListener('submit', async (event) => {
