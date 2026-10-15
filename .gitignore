@@ -1,0 +1,27 @@
+# Security & Sensitive Files
+.ssh/
+*.pem
+*.key
+*.id_rsa
+*.id_ed25519
+.env
+.env.*
+!.env.example
+
+# Local configs & secrets
+*config.local.*
+*secret*
+!*.md
+
+# Logs & temp
+*.log
+temp/
+tmp/
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
