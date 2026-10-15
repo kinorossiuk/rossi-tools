@@ -6,7 +6,7 @@
 - 작업 시작 시 현재 디렉터리에 Git 메타데이터가 없으면 위 원격 저장소의 `main`을 기준으로 복구·동기화한다.
 - GitHub 푸시는 SSH 원격 `git@github.com:kinorossiuk/wp_sms_api_reminder.git`와 `/home/khadas/.ssh/wp_sms_api_reminder` 키를 `IdentitiesOnly=yes`로 사용한다. 키 내용·비밀값은 출력하거나 커밋하지 않는다.
 - GitHub 키 지문은 `SHA256:yDdYXy8gPdmkryrh8YBCW2huaZwYXbigdlE0cwEI3h4`이며, `wp_sms_api_reminder`에 읽기·쓰기 권한이 있다.
-- cPanel 운영 배포용 키는 `.ssh/cpanel_deploy`이며, GitHub 푸시에는 사용하지 않는다.
+- cPanel 운영 배포용 키는 `/home/khadas/.ssh/rossiuk_cpanel_deploy`이며, GitHub 푸시에는 사용하지 않는다.
 
 ## 완료 및 배포
 
