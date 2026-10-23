@@ -20,7 +20,7 @@ $timerJsVersion = (string) (filemtime(__DIR__ . '/../static/timer.js') ?: '1');
 
   <div class="timer-controls">
     <div class="timer-duration"><label>시간 <input id="timer-hours" type="number" min="0" max="99" inputmode="numeric" value="0"></label><label>분 <input id="timer-minutes" type="number" min="0" max="59" inputmode="numeric" value="5"></label><label>초 <input id="timer-seconds" type="number" min="0" max="59" inputmode="numeric" value="0"></label></div>
-    <div class="timer-presets" aria-label="빠른 시간 설정"><button class="ghost" type="button" data-timer-preset="60">1분</button><button class="ghost" type="button" data-timer-preset="300">5분</button><button class="ghost" type="button" data-timer-preset="600">10분</button><button class="ghost" type="button" data-timer-preset="1500">25분</button></div>
+    <div class="timer-adjust" role="group" aria-label="시간 조절"><button class="ghost" type="button" data-timer-adjust="-300" aria-label="5분 줄이기">−5분</button><button class="ghost" type="button" data-timer-adjust="-60" aria-label="1분 줄이기">−1분</button><button class="ghost" type="button" data-timer-adjust="60" aria-label="1분 늘리기">+1분</button><button class="ghost" type="button" data-timer-adjust="300" aria-label="5분 늘리기">+5분</button></div>
     <div class="timer-actions"><button class="primary" id="timer-start" type="button">시작</button><button class="ghost" id="timer-pause" type="button" disabled>일시정지</button><button class="ghost" id="timer-reset" type="button" disabled>초기화</button></div>
   </div>
 

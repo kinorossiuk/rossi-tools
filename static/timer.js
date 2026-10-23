@@ -16,6 +16,8 @@
   const notificationButton = root.querySelector('#timer-notification');
   const notificationCopy = root.querySelector('#timer-notification-copy');
   const status = root.querySelector('#timer-status');
+  const adjustButtons = Array.from(root.querySelectorAll('[data-timer-adjust]'));
+  const maxSeconds = 99 * 3600 + 59 * 60 + 59;
   const kstTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   let timerId = null;
   let audioContext = null;
@@ -47,6 +49,37 @@
     minutes.value = String(Math.floor((total % 3600) / 60));
     seconds.value = String(total % 60);
   };
+  const inputSeconds = () => {
+    const part = (input) => {
+      const value = Number(input.value);
+      return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+    };
+    return Math.min(maxSeconds, part(hours) * 3600 + part(minutes) * 60 + part(seconds));
+  };
+  const formatDuration = (total) => {
+    const hourPart = Math.floor(total / 3600); const minutePart = Math.floor((total % 3600) / 60); const secondPart = total % 60;
+    return hourPart > 0 ? `${hourPart}시간 ${minutePart}분 ${secondPart}초` : `${minutePart}분 ${secondPart}초`;
+  };
+  const adjustLocked = () => state.running || state.remainingMs > 0;
+  const syncAdjustButtons = () => {
+    const locked = adjustLocked(); const total = inputSeconds();
+    adjustButtons.forEach((button) => {
+      const delta = Number(button.dataset.timerAdjust);
+      button.disabled = locked || (delta < 0 ? total <= 0 : total >= maxSeconds);
+    });
+  };
+  const normalizeInputs = () => {
+    setInputs(inputSeconds() * 1000);
+    syncAdjustButtons();
+  };
+  const adjustDuration = (delta) => {
+    if (!Number.isFinite(delta) || adjustLocked()) return;
+    const total = Math.min(maxSeconds, Math.max(0, inputSeconds() + delta));
+    setInputs(total * 1000);
+    root.classList.remove('is-complete');
+    setStatus(`설정 시간: ${formatDuration(total)}`);
+    update();
+  };
   const updateNotification = () => {
     if (!('Notification' in window)) { notificationButton.disabled = true; notificationCopy.textContent = '이 브라우저는 OS 알림을 지원하지 않습니다.'; return; }
     if (Notification.permission === 'granted') { notificationButton.disabled = true; notificationButton.textContent = '알림 허용됨'; notificationCopy.textContent = '타이머 종료 시 OS 알림을 표시합니다.'; }
@@ -59,6 +92,7 @@
     if (state.running && state.endsAt) target.textContent = `종료 예정: ${kstTime.format(new Date(state.endsAt))} KST`;
     else target.textContent = left > 0 ? '일시정지됨' : '시간을 설정하고 시작하세요.';
     pauseButton.disabled = !state.running && left === 0; pauseButton.textContent = state.running ? '일시정지' : '계속'; resetButton.disabled = left === 0 && !state.running;
+    syncAdjustButtons();
     if (state.running && left === 0) finish();
   };
   const sound = () => {
@@ -89,7 +123,8 @@
     else start(state.remainingMs);
   });
   resetButton.addEventListener('click', () => { state = { running: false, remainingMs: 0, endsAt: null }; saveState(); clearInterval(timerId); timerId = null; root.classList.remove('is-complete'); setStatus('타이머를 초기화했습니다.'); update(); });
-  root.querySelectorAll('[data-timer-preset]').forEach((button) => button.addEventListener('click', () => { setInputs(Number(button.dataset.timerPreset) * 1000); root.classList.remove('is-complete'); setStatus(`${button.textContent}으로 설정했습니다.`); update(); }));
+  adjustButtons.forEach((button) => button.addEventListener('click', () => adjustDuration(Number(button.dataset.timerAdjust))));
+  [hours, minutes, seconds].forEach((input) => { input.addEventListener('input', syncAdjustButtons); input.addEventListener('change', normalizeInputs); });
   soundButton.addEventListener('click', () => { soundEnabled = !soundEnabled; localStorage.setItem(soundKey, soundEnabled ? 'on' : 'off'); soundButton.textContent = `소리: ${soundEnabled ? '켜짐' : '꺼짐'}`; soundButton.setAttribute('aria-pressed', String(soundEnabled)); });
   notificationButton.addEventListener('click', async () => { if ('Notification' in window) { await Notification.requestPermission(); updateNotification(); } });
   state = readState();
