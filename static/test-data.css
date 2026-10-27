@@ -21,6 +21,7 @@
 .test-status{min-height:1.3rem;color:var(--acid)}
 .test-status.is-error{color:var(--danger)}
 .test-actions{display:flex;gap:.7rem;align-items:center}
+.test-actions button:disabled{cursor:not-allowed;opacity:.45}
 .test-actions .primary{margin:0}
 .wide-field{grid-column:1/-1}
 .message-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;padding:1px;background:var(--line)}

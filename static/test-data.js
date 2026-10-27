@@ -16,6 +16,7 @@
   const imageOption = root.querySelector('.file-image-option');
   const fileHint = root.querySelector('#file-hint');
   const fileStatus = root.querySelector('#file-status');
+  const fileCancel = root.querySelector('#file-cancel');
   const messageForm = root.querySelector('#test-message-form');
   const messageCount = root.querySelector('#message-count');
   const messagePreset = root.querySelector('#message-preset');
@@ -54,12 +55,50 @@
   const contactNameState = root.querySelector('#contact-name-state');
   const contactNameReset = root.querySelector('#contact-name-reset');
   const contactStatus = root.querySelector('#contact-status');
-  const maxBytes = 300 * 1024 * 1024;
-  const unitBytes = { KB: 1000, KiB: 1024, MB: 1000 * 1000, MiB: 1024 * 1024 };
+  const MAX_BYTES = 1024 * 1024 * 1024;
+  const CHUNK_BYTES = 1024 * 1024;
+  const YIELD_BYTES = 8 * 1024 * 1024;
+  const unitBytes = { KB: 1000, KiB: 1024, MB: 1000 * 1000, MiB: 1024 * 1024, GB: 1000 * 1000 * 1000, GiB: 1024 * 1024 * 1024 };
   const webmBitrate = 12_000_000;
   let contacts = [];
   let messageQrParts = [];
   let messageQrIndex = 0;
+  let activeJob = null;
+
+  const pause = () => new Promise((resolve) => window.setTimeout(resolve, 0));
+  const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  const checkCancelled = () => {
+    if (activeJob?.cancelled) throw new DOMException('생성이 취소되었습니다.', 'AbortError');
+  };
+  const report = (text) => {
+    const job = activeJob;
+    if (job && typeof job.onProgress === 'function') job.onProgress(text);
+  };
+  const reportProgress = (processed, total) => {
+    if (total > 0) report(`생성 중… ${Math.min(100, Math.floor((processed / total) * 100))}%`);
+  };
+  const padParts = async (length, value = 0, total = length) => {
+    const chunk = new Uint8Array(Math.min(CHUNK_BYTES, length));
+    if (value) chunk.fill(value);
+    const parts = [];
+    let remaining = length;
+    let processed = 0;
+    let sinceYield = 0;
+    while (remaining > 0) {
+      checkCancelled();
+      const size = Math.min(chunk.length, remaining);
+      parts.push(size === chunk.length ? chunk : chunk.subarray(0, size));
+      remaining -= size;
+      processed += size;
+      sinceYield += size;
+      if (sinceYield >= YIELD_BYTES) {
+        sinceYield = 0;
+        reportProgress(processed, total);
+        await pause();
+      }
+    }
+    return parts;
+  };
 
   const setStatus = (element, text, isError = false) => {
     element.textContent = text;
@@ -116,11 +155,35 @@
     return table;
   })();
 
-  const crc32 = (data) => {
-    let value = 0xffffffff;
+  const crc32Update = (initial, data) => {
+    let value = initial;
     for (let index = 0; index < data.length; index += 1) value = (value >>> 8) ^ crcTable[(value ^ data[index]) & 255];
-    return (value ^ 0xffffffff) >>> 0;
+    return value >>> 0;
   };
+  const crc32 = (data) => (crc32Update(0xffffffff, data) ^ 0xffffffff) >>> 0;
+  const crc32Fill = async (initial, length, value, total = length) => {
+    const chunk = new Uint8Array(Math.min(CHUNK_BYTES, length));
+    if (value) chunk.fill(value);
+    let checksum = initial;
+    let remaining = length;
+    let processed = 0;
+    let sinceYield = 0;
+    while (remaining > 0) {
+      checkCancelled();
+      const size = Math.min(chunk.length, remaining);
+      checksum = crc32Update(checksum, chunk.subarray(0, size));
+      remaining -= size;
+      processed += size;
+      sinceYield += size;
+      if (sinceYield >= YIELD_BYTES) {
+        sinceYield = 0;
+        reportProgress(processed, total);
+        await pause();
+      }
+    }
+    return checksum >>> 0;
+  };
+  const crc32Padding = async (length, value = 0, total = length) => (await crc32Fill(0xffffffff, length, value, total) ^ 0xffffffff) >>> 0;
 
   const zip = (entries) => {
     const localParts = [];
@@ -140,17 +203,27 @@
     return concat([...localParts, central, ending]);
   };
 
-  const paddedZip = (entries, target) => {
-    const withEmptyPadding = [...entries, { name: 'padding.bin', data: new Uint8Array(0) }];
-    const base = zip(withEmptyPadding);
-    const padding = target - base.length;
-    if (padding < 0) throw new Error(`선택한 용량이 문서 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
-    return zip([...entries, { name: 'padding.bin', data: new Uint8Array(padding) }]);
+  const paddedZip = async (entries, target, mimeType) => {
+    const base = zip(entries);
+    const endOffset = base.length - 22;
+    const centralLength = u32At(base, endOffset + 12);
+    const centralOffset = u32At(base, endOffset + 16);
+    const entryCount = u16At(base, endOffset + 10);
+    const name = ascii('padding.bin');
+    const overhead = 30 + name.length + 46 + name.length;
+    const padding = target - base.length - overhead;
+    if (padding < 0) throw new Error(`선택한 용량이 문서 최소 크기(${formatBytes(base.length + overhead)})보다 작습니다.`);
+    const checksum = await crc32Padding(padding, 0, target);
+    const localHeader = concat([ascii('PK\x03\x04'), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding), u32(padding), u16(name.length), u16(0), name]);
+    const centralHeader = concat([ascii('PK\x01\x02'), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding), u32(padding), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(centralOffset), name]);
+    const ending = concat([ascii('PK\x05\x06'), u16(0), u16(0), u16(entryCount + 1), u16(entryCount + 1), u32(centralLength + centralHeader.length), u32(centralOffset + localHeader.length + padding), u16(0)]);
+    const parts = [base.subarray(0, centralOffset), localHeader, ...(await padParts(padding, 0, target)), base.subarray(centralOffset, endOffset), centralHeader, ending];
+    return new Blob(parts, { type: mimeType });
   };
 
   const u16At = (data, offset) => data[offset] | (data[offset + 1] << 8);
   const u32At = (data, offset) => (data[offset] | (data[offset + 1] << 8) | (data[offset + 2] << 16) | (data[offset + 3] << 24)) >>> 0;
-  const padExistingZip = (base, target, label) => {
+  const padExistingZip = async (base, target, label, mimeType) => {
     let endOffset = -1;
     for (let offset = base.length - 22; offset >= Math.max(0, base.length - 65557); offset -= 1) {
       if (u32At(base, offset) === 0x06054b50) { endOffset = offset; break; }
@@ -165,13 +238,13 @@
     const fixedOverhead = 30 + name.length + 46 + name.length;
     const paddingLength = target - base.length - fixedOverhead;
     if (paddingLength < 0) throw new Error(`선택한 용량이 ${label} 최소 크기(${formatBytes(base.length + fixedOverhead)})보다 작습니다.`);
-    const padding = new Uint8Array(paddingLength);
-    const checksum = crc32(padding);
-    const local = concat([ascii('PK\x03\x04'), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding.length), u32(padding.length), u16(name.length), u16(0), name, padding]);
-    const centralPadding = concat([ascii('PK\x01\x02'), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(padding.length), u32(padding.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(centralOffset), name]);
+    const checksum = await crc32Padding(paddingLength, 0, target);
+    const localHeader = concat([ascii('PK\x03\x04'), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(paddingLength), u32(paddingLength), u16(name.length), u16(0), name]);
+    const centralPadding = concat([ascii('PK\x01\x02'), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0), u32(checksum), u32(paddingLength), u32(paddingLength), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(centralOffset), name]);
     const comment = base.subarray(endOffset + 22);
-    const ending = concat([ascii('PK\x05\x06'), u16(0), u16(0), u16(entryCount + 1), u16(entryCount + 1), u32(centralLength + centralPadding.length), u32(centralOffset + local.length), u16(comment.length), comment]);
-    return concat([base.subarray(0, centralOffset), local, base.subarray(centralOffset, endOffset), centralPadding, ending]);
+    const ending = concat([ascii('PK\x05\x06'), u16(0), u16(0), u16(entryCount + 1), u16(entryCount + 1), u32(centralLength + centralPadding.length), u32(centralOffset + localHeader.length + paddingLength), u16(comment.length), comment]);
+    const parts = [base.subarray(0, centralOffset), localHeader, ...(await padParts(paddingLength, 0, target)), base.subarray(centralOffset, endOffset), centralPadding, ending];
+    return new Blob(parts, { type: mimeType });
   };
 
   const xml = (value) => value.replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[character]);
@@ -241,24 +314,24 @@
     ...pattern.rows,
   ].map((row, rowIndex) => `<row r="${rowIndex + 1}"${rowIndex === 0 ? ' ht="28" customHeight="1"' : ''}>${row.map((value, columnIndex) => `<c r="${xlsxColumn(columnIndex)}${rowIndex + 1}" t="inlineStr" s="${rowIndex === 0 ? 1 : rowIndex === 1 ? 2 : 0}"><is><t>${xml(value)}</t></is></c>`).join('')}</row>`).join('');
 
-  const makeXlsx = (target, pattern, generatedTitle) => paddedZip([
+  const makeXlsx = async (target, pattern, generatedTitle) => paddedZip([
     { name: '[Content_Types].xml', data: ascii('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>') },
     { name: '_rels/.rels', data: ascii('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>') },
     { name: 'xl/workbook.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${xml(pattern.name)}" sheetId="1" r:id="rId1"/></sheets></workbook>`) },
     { name: 'xl/_rels/workbook.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>') },
     { name: 'xl/styles.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Arial"/></font><font><b/><sz val="14"/><color rgb="FF111310"/><name val="Arial"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF${pattern.accent}"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/></cellXfs></styleSheet>`) },
     { name: 'xl/worksheets/sheet1.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="1" width="24" customWidth="1"/><col min="2" max="2" width="34" customWidth="1"/></cols><sheetData>${xlsxRows(pattern, generatedTitle)}<row r="7"><c r="A7" t="inlineStr"><is><t>Target size</t></is></c><c r="B7" t="inlineStr"><is><t>${xml(formatBytes(target))}</t></is></c></row></sheetData></worksheet>`) },
-  ], target);
+  ], target, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 
   const docxParagraphs = (pattern) => pattern.rows.map(([label, value], index) => `<w:p><w:pPr><w:spacing w:before="${index === 0 ? 240 : 80}" w:after="80"/><w:shd w:fill="${index % 2 ? 'F2F2F2' : 'FFFFFF'}"/></w:pPr><w:r><w:rPr><w:b/><w:color w:val="${pattern.accent}"/></w:rPr><w:t>${xml(label)}: </w:t></w:r><w:r><w:t>${xml(value)}</w:t></w:r></w:p>`).join('');
 
-  const makeDocx = (target, pattern, patternIndex, generatedTitle) => paddedZip([
+  const makeDocx = async (target, pattern, patternIndex, generatedTitle) => paddedZip([
     { name: '[Content_Types].xml', data: ascii('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="bin" ContentType="application/octet-stream"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>') },
     { name: '_rels/.rels', data: ascii('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>') },
     { name: 'word/document.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:jc w:val="${patternIndex % 2 ? 'left' : 'center'}"/><w:spacing w:after="180"/><w:shd w:fill="${pattern.accent}"/></w:pPr><w:r><w:rPr><w:b/><w:sz w:val="34"/><w:color w:val="111310"/></w:rPr><w:t>${xml(generatedTitle)}</w:t></w:r></w:p><w:p><w:r><w:rPr><w:i/><w:color w:val="666666"/></w:rPr><w:t>${xml(pattern.title)} · ${xml(pattern.subtitle)}</w:t></w:r></w:p>${docxParagraphs(pattern)}<w:p><w:r><w:t>Target size: ${xml(formatBytes(target))}</w:t></w:r></w:p><w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134"/></w:sectPr></w:body></w:document>`) },
-  ], target);
+  ], target, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 
-  const makePptx = (target, pattern, patternIndex, generatedTitle) => {
+  const makePptx = async (target, pattern, patternIndex, generatedTitle) => {
     const accent = `FF${pattern.accent}`;
     const slideText = (value, size, bold = false) => `<a:p><a:r><a:rPr lang="ko-KR" sz="${size}"${bold ? ' b="1"' : ''}/><a:t>${xml(value)}</a:t></a:r><a:endParaRPr lang="ko-KR"/></a:p>`;
     return paddedZip([
@@ -273,7 +346,7 @@
       { name: 'ppt/slideMasters/slideMaster1.xml', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sldMaster xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"><p:cSld name="ROSSI Tools"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr/></p:spTree></p:cSld><p:clrMap accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" bg1="lt1" bg2="lt2" folHlink="folHlink" hlink="hlink" tx1="dk1" tx2="dk2"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>') },
       { name: 'ppt/slideMasters/_rels/slideMaster1.xml.rels', data: ascii('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/></Relationships>') },
       { name: 'ppt/theme/theme1.xml', data: ascii(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="ROSSI Theme"><a:themeElements><a:clrScheme name="ROSSI"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="1B1E1B"/></a:dk2><a:lt2><a:srgbClr val="F5F3EB"/></a:lt2><a:accent1><a:srgbClr val="${pattern.accent}"/></a:accent1><a:accent2><a:srgbClr val="78DCE8"/></a:accent2><a:accent3><a:srgbClr val="FFB86C"/></a:accent3><a:accent4><a:srgbClr val="BD93F9"/></a:accent4><a:accent5><a:srgbClr val="50FA7B"/></a:accent5><a:accent6><a:srgbClr val="FF79C6"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink><a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme><a:fontScheme name="ROSSI"><a:majorFont><a:latin typeface="Aptos Display"/><a:ea typeface="맑은 고딕"/><a:cs typeface="Arial"/></a:majorFont><a:minorFont><a:latin typeface="Aptos"/><a:ea typeface="맑은 고딕"/><a:cs typeface="Arial"/></a:minorFont></a:fontScheme><a:fmtScheme name="ROSSI"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst><a:lnStyleLst><a:ln w="9525"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/></a:ln></a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst></a:fmtScheme></a:themeElements></a:theme>`) },
-    ], target);
+    ], target, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
   };
 
   const pdfEscape = (value) => value.replace(/[\\()]/g, '\\$&');
@@ -288,45 +361,59 @@
     return `q ${accent.join(' ')} rg ${shapes[patternIndex]} Q\nBT /F1 20 Tf 72 748 Td (${pdfEscape(generatedTitle)}) Tj ET\nBT /F1 10 Tf 72 720 Td (${pdfEscape(pattern.title)} - ${pdfEscape(pattern.subtitle)}) Tj ET\n${rows}\nBT /F1 9 Tf 72 430 Td (Target size: ${pdfEscape(formatBytes(target))}) Tj ET\n`;
   };
 
-  const buildPdf = (padding, pattern, patternIndex, target, generatedTitle) => {
-    const pageContent = pdfPatternContent(pattern, patternIndex, target, generatedTitle);
+  const pdfHeader = ascii('%PDF-1.4\n%ROSSI\n');
+  const pdfXrefPrefix = ascii('xref\n0 7\n');
+  const pdfXrefFree = ascii('0000000000 65535 f \n');
+  const pdfXrefEntry = (offset) => ascii(`${String(offset).padStart(10, '0')} 00000 n \n`);
+  const pdfStreamFooter = ascii('\nendstream\nendobj\n');
+  const pdfPaddingHeader = (padding) => ascii(`6 0 obj\n<< /Length ${padding} >>\nstream\n`);
+  const pdfTrailer = (xrefOffset) => ascii(`trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+
+  const makePdf = async (target, pattern, patternIndex, generatedTitle) => {
+    const pageBytes = encoder.encode(pdfPatternContent(pattern, patternIndex, target, generatedTitle));
     const objects = [
-      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
-      '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n',
-      `4 0 obj\n<< /Length ${encoder.encode(pageContent).length} >>\nstream\n${pageContent}endstream\nendobj\n`,
-      '5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-      `6 0 obj\n<< /Length ${padding} >>\nstream\n${'0'.repeat(padding)}\nendstream\nendobj\n`,
+      [ascii('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n')],
+      [ascii('2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n')],
+      [ascii('3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n')],
+      [ascii(`4 0 obj\n<< /Length ${pageBytes.length} >>\nstream\n`), pageBytes, ascii('endstream\nendobj\n')],
+      [ascii('5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n')],
     ];
-    let result = '%PDF-1.4\n%ROSSI\n';
-    const offsets = [0];
-    objects.forEach((object) => { offsets.push(result.length); result += object; });
-    const xref = result.length;
-    result += 'xref\n0 7\n0000000000 65535 f \n';
-    offsets.slice(1).forEach((offset) => { result += `${String(offset).padStart(10, '0')} 00000 n \n`; });
-    result += `trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-    return encoder.encode(result);
-  };
-
-  const makePdf = (target, pattern, patternIndex, generatedTitle) => {
-    const minimum = buildPdf(0, pattern, patternIndex, target, generatedTitle).length;
+    const objectLengths = objects.map((parts) => parts.reduce((total, part) => total + part.length, 0));
+    const xrefEntryLength = pdfXrefEntry(0).length;
+    const baseLength = pdfHeader.length + objectLengths.reduce((total, length) => total + length, 0) + pdfStreamFooter.length + pdfXrefPrefix.length + pdfXrefFree.length + xrefEntryLength * (objects.length + 1);
+    const totalLength = (padding) => {
+      const xrefOffset = pdfHeader.length + objectLengths.reduce((total, length) => total + length, 0) + pdfPaddingHeader(padding).length + padding + pdfStreamFooter.length;
+      return xrefOffset + pdfXrefPrefix.length + pdfXrefFree.length + xrefEntryLength * (objects.length + 1) + pdfTrailer(xrefOffset).length;
+    };
+    const minimum = totalLength(0);
     if (target < minimum) throw new Error(`선택한 용량이 PDF 최소 크기(${formatBytes(minimum)})보다 작습니다.`);
-    let padding = 0;
-    for (let attempts = 0; attempts < 8; attempts += 1) {
-      const output = buildPdf(padding, pattern, patternIndex, target, generatedTitle);
-      const difference = target - output.length;
-      if (difference === 0) return output;
-      padding += difference;
+    let padding = Math.max(0, target - baseLength);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      checkCancelled();
+      const difference = target - totalLength(padding);
+      if (difference === 0) break;
+      padding = Math.max(0, padding + difference);
+      if (attempt === 11) throw new Error('PDF 크기를 맞추지 못했습니다. 다시 시도해 주세요.');
     }
-    throw new Error('PDF 크기를 맞추지 못했습니다. 다시 시도해 주세요.');
+    const offsets = [];
+    let cursor = pdfHeader.length;
+    objectLengths.forEach((length) => { offsets.push(cursor); cursor += length; });
+    const paddingObjectOffset = cursor;
+    const xrefOffset = cursor + pdfPaddingHeader(padding).length + padding + pdfStreamFooter.length;
+    const parts = [pdfHeader];
+    objects.forEach((objectParts) => parts.push(...objectParts));
+    parts.push(pdfPaddingHeader(padding), ...(await padParts(padding, 48, target)), pdfStreamFooter, pdfXrefPrefix, pdfXrefFree);
+    offsets.forEach((offset) => parts.push(pdfXrefEntry(offset)));
+    parts.push(pdfXrefEntry(paddingObjectOffset), pdfTrailer(xrefOffset));
+    return new Blob(parts, { type: 'application/pdf' });
   };
 
-  const makeDoc = (target, pattern, generatedTitle) => {
+  const makeDoc = async (target, pattern, generatedTitle) => {
     if (typeof window.textToDoc !== 'function') throw new Error('DOC 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
     const content = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]].map((row) => `${row[0]}: ${row[1]}`).join('\r\n');
     const base = window.textToDoc(content);
     if (base.length > target) throw new Error(`선택한 용량이 DOC 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
-    return concat([base, new Uint8Array(target - base.length)]);
+    return new Blob([base, ...(await padParts(target - base.length, 0, target))], { type: 'application/msword' });
   };
 
   const textPatterns = [
@@ -342,16 +429,23 @@
     (pattern) => `${pattern.title}\n${pattern.rows.map(([key, value], index) => `[${index % 2 ? ' ' : 'x'}] ${key} -- ${value}`).join('\n')}\n`,
   ];
 
-  const makeText = (target, pattern, patternIndex, generatedTitle) => {
+  const makeText = async (target, pattern, patternIndex, generatedTitle) => {
     const seed = encoder.encode(`${generatedTitle}\n${textPatterns[patternIndex](pattern)}`);
-    const output = new Uint8Array(target);
-    for (let offset = 0; offset < target; offset += seed.length) output.set(seed.subarray(0, Math.min(seed.length, target - offset)), offset);
-    return output;
-  };
-
-  const pngChunk = (type, data) => {
-    const typeBytes = ascii(type);
-    return concat([be32(data.length), typeBytes, data, be32(crc32(concat([typeBytes, data])))]);
+    const parts = [];
+    let offset = 0;
+    while (offset < target) {
+      checkCancelled();
+      const length = Math.min(CHUNK_BYTES, target - offset);
+      const chunk = new Uint8Array(length);
+      for (let index = 0; index < length; index += 1) chunk[index] = seed[(offset + index) % seed.length];
+      parts.push(chunk);
+      offset += length;
+      if (offset % YIELD_BYTES === 0) {
+        reportProgress(offset, target);
+        await pause();
+      }
+    }
+    return new Blob(parts, { type: 'text/plain;charset=utf-8' });
   };
 
   const drawPngPattern = (context, width, height, pattern, patternIndex) => {
@@ -427,9 +521,14 @@
     const base = new Uint8Array(await blob.arrayBuffer());
     const remaining = target - base.length;
     if (remaining < 20) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 20)})보다 작습니다.`);
-    const padding = new Uint8Array(remaining - 12);
-    padding.set(ascii('padding\0'));
-    return concat([base.subarray(0, base.length - 12), pngChunk('tEXt', padding), base.subarray(base.length - 12)]);
+    const dataLength = remaining - 12;
+    const keyword = ascii('padding\0');
+    let checksum = crc32Update(0xffffffff, ascii('tEXt'));
+    checksum = crc32Update(checksum, keyword);
+    checksum = await crc32Fill(checksum, dataLength - keyword.length, 0, target);
+    checksum = (checksum ^ 0xffffffff) >>> 0;
+    const parts = [base.subarray(0, base.length - 12), be32(dataLength), ascii('tEXt'), keyword, ...(await padParts(dataLength - keyword.length, 0, target)), be32(checksum), base.subarray(base.length - 12)];
+    return new Blob(parts, { type: 'image/png' });
   };
 
   const makeJpeg = async (target, pattern, patternIndex, generatedTitle) => {
@@ -451,14 +550,23 @@
     const difference = target - base.length;
     if (difference < 4) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 4)})보다 작습니다.`);
     const comments = [];
+    const fullPayload = new Uint8Array(65533);
     const segmentCount = Math.ceil(difference / 65537);
     let remainingPayload = difference - segmentCount * 4;
+    let sinceYield = 0;
     for (let index = 0; index < segmentCount; index += 1) {
+      checkCancelled();
       const payloadLength = Math.min(65533, remainingPayload);
       remainingPayload -= payloadLength;
-      comments.push(concat([Uint8Array.of(0xff, 0xfe), be16(payloadLength + 2), new Uint8Array(payloadLength)]));
+      comments.push(Uint8Array.of(0xff, 0xfe), be16(payloadLength + 2), payloadLength === fullPayload.length ? fullPayload : new Uint8Array(payloadLength));
+      sinceYield += payloadLength + 4;
+      if (sinceYield >= YIELD_BYTES) {
+        sinceYield = 0;
+        reportProgress(difference - remainingPayload, target);
+        await pause();
+      }
     }
-    return concat([base.subarray(0, 2), ...comments, base.subarray(2)]);
+    return new Blob([base.subarray(0, 2), ...comments, base.subarray(2)], { type: 'image/jpeg' });
   };
 
   const gifLzw = (pixels) => {
@@ -512,21 +620,48 @@
     return concat([...blocks, Uint8Array.of(0)]);
   };
 
-  const gifComment = (totalLength) => {
-    for (let blockCount = Math.max(1, Math.ceil((totalLength - 3) / 256)); blockCount <= Math.ceil(totalLength / 3); blockCount += 1) {
-      const payloadLength = totalLength - 3 - blockCount;
-      if (payloadLength >= 0 && payloadLength <= blockCount * 255 && payloadLength > (blockCount - 1) * 255) {
-        const parts = [Uint8Array.of(0x21, 0xfe)];
-        let remaining = payloadLength;
-        while (remaining) { const length = Math.min(255, remaining); parts.push(Uint8Array.of(length), new Uint8Array(length)); remaining -= length; }
-        parts.push(Uint8Array.of(0));
-        return concat(parts);
-      }
+  const gifSubblockParts = (bytes) => {
+    const parts = [];
+    const fullData = new Uint8Array(254);
+    let remaining = bytes;
+    while (remaining > 256) {
+      parts.push(Uint8Array.of(fullData.length), fullData);
+      remaining -= 255;
     }
-    throw new Error('GIF 패딩을 만들지 못했습니다.');
+    if (remaining === 1) throw new Error('GIF 패딩을 만들지 못했습니다.');
+    if (remaining > 0) parts.push(Uint8Array.of(remaining - 1), new Uint8Array(remaining - 1));
+    return parts;
   };
 
-  const makeGif = (target, pattern, patternIndex, generatedTitle) => {
+  const gifCommentParts = async (totalLength) => {
+    let region = totalLength - 3;
+    if (region < 2) throw new Error('GIF 패딩을 만들지 못했습니다.');
+    let bulkUnits = Math.floor(region / 256);
+    let tailBytes = region - bulkUnits * 256;
+    if (tailBytes === 1) { bulkUnits -= 1; tailBytes = 257; }
+    const template = new Uint8Array(CHUNK_BYTES);
+    for (let offset = 0; offset < CHUNK_BYTES; offset += 256) template[offset] = 255;
+    const unitsPerChunk = CHUNK_BYTES / 256;
+    const parts = [Uint8Array.of(0x21, 0xfe)];
+    const fullChunks = Math.floor(bulkUnits / unitsPerChunk);
+    let sinceYield = 0;
+    for (let index = 0; index < fullChunks; index += 1) {
+      checkCancelled();
+      parts.push(template);
+      sinceYield += CHUNK_BYTES;
+      if (sinceYield >= YIELD_BYTES) {
+        sinceYield = 0;
+        reportProgress(index * CHUNK_BYTES, totalLength);
+        await pause();
+      }
+    }
+    const partialUnits = bulkUnits % unitsPerChunk;
+    if (partialUnits) parts.push(template.subarray(0, partialUnits * 256));
+    parts.push(...gifSubblockParts(tailBytes), Uint8Array.of(0));
+    return parts;
+  };
+
+  const makeGif = async (target, pattern, patternIndex, generatedTitle) => {
     const [width, height] = dimension.value.split('x').map(Number);
     const pixels = new Uint8Array(width * height);
     const block = Math.max(20, Math.floor(width / 12));
@@ -539,13 +674,13 @@
       Uint8Array.of(0x2c), u16(0), u16(0), u16(width), u16(height), Uint8Array.of(0), Uint8Array.of(2), gifLzw(pixels), Uint8Array.of(0x3b),
     ]);
     const difference = target - base.length;
-    if (difference < 4) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 4)})보다 작습니다.`);
-    const comment = gifComment(difference);
-    return concat([base.subarray(0, base.length - 1), comment, base.subarray(base.length - 1)]);
+    if (difference < 5) throw new Error(`선택한 용량이 이미지 최소 크기(${formatBytes(base.length + 5)})보다 작습니다.`);
+    const comment = await gifCommentParts(difference);
+    return new Blob([base.subarray(0, base.length - 1), ...comment, base.subarray(base.length - 1)], { type: 'image/gif' });
   };
 
   const tiffEntry = (tag, type, count, value) => concat([be16(tag), be16(type), be32(count), value]);
-  const makeTiff = (target, patternIndex, generatedTitle) => {
+  const makeTiff = async (target, patternIndex, generatedTitle) => {
     const [width, height] = dimension.value.split('x').map(Number);
     const rowBytes = Math.ceil(width / 8);
     const bitmap = new Uint8Array(rowBytes * height);
@@ -561,12 +696,12 @@
       tiffEntry(259, 3, 1, concat([be16(1), u16(0)])), tiffEntry(262, 3, 1, concat([be16(1), u16(0)])), tiffEntry(270, 2, descriptionCount, be32(descriptionOffset)),
       tiffEntry(273, 4, 1, be32(stripOffset)), tiffEntry(277, 3, 1, concat([be16(1), u16(0)])), tiffEntry(278, 4, 1, be32(height)), tiffEntry(279, 4, 1, be32(bitmap.length)),
     ];
-    const description = new Uint8Array(descriptionCount);
-    description.set(ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, Math.max(0, description.length - 1)), 0);
-    return concat([ascii('MM'), be16(42), be32(8), be16(entries.length), ...entries, be32(0), description, bitmap]);
+    const description = ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, Math.max(0, descriptionCount - 1));
+    const descriptionPadding = await padParts(descriptionCount - description.length, 0, target);
+    return new Blob([ascii('MM'), be16(42), be32(8), be16(entries.length), ...entries, be32(0), description, ...descriptionPadding, bitmap], { type: 'image/tiff' });
   };
 
-  const makePsd = (target, patternIndex, generatedTitle) => {
+  const makePsd = async (target, patternIndex, generatedTitle) => {
     const [width, height] = dimension.value.split('x').map(Number);
     const pixels = width * height;
     const baseLength = 26 + 4 + 4 + 4 + 2 + pixels * 3;
@@ -582,28 +717,28 @@
       channels[1][index] = active ? 255 : 26;
       channels[2][index] = active ? 95 : 23;
     }
-    const resourceData = new Uint8Array(resourceDataLength);
-    resourceData.set(ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, resourceData.length));
-    const resource = concat([ascii('8BIM'), be16(2999), Uint8Array.of(0, 0), be32(resourceDataLength), resourceData]);
-    return concat([
+    const label = ascii(`ROSSI TEST DATA ${generatedTitle}`).subarray(0, resourceDataLength);
+    const resourceHeader = concat([ascii('8BIM'), be16(2999), Uint8Array.of(0, 0), be32(resourceDataLength)]);
+    const resourcePadding = await padParts(resourceDataLength - label.length, 0, target);
+    return new Blob([
       ascii('8BPS'), be16(1), new Uint8Array(6), be16(3), be32(height), be32(width), be16(8), be16(3),
-      be32(0), be32(resource.length), resource, be32(0), be16(0), ...channels,
-    ]);
+      be32(0), be32(resourceHeader.length + resourceDataLength), resourceHeader, label, ...resourcePadding, be32(0), be16(0), ...channels,
+    ], { type: 'image/vnd.adobe.photoshop' });
   };
 
-  const makeHwpx = (target, pattern, generatedTitle) => {
+  const makeHwpx = async (target, pattern, generatedTitle) => {
     const rows = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]];
     if (typeof window.rossiHwpx?.create !== 'function') throw new Error('HWPX 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
     const base = window.rossiHwpx.create(rows.map((row) => `${row[0]}: ${row[1]}`).join('\n'), generatedTitle);
-    return padExistingZip(base, target, 'HWPX');
+    return padExistingZip(base, target, 'HWPX', 'application/vnd.hancom.hwpx');
   };
 
-  const makeHwp = (target, pattern, generatedTitle) => {
+  const makeHwp = async (target, pattern, generatedTitle) => {
     if (typeof window.rossiHwp?.create !== 'function') throw new Error('HWP 생성기를 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
     const content = [[generatedTitle, `${pattern.title} · ${pattern.subtitle}`], ...pattern.rows, ['Target size', formatBytes(target)]].map((row) => `${row[0]}: ${row[1]}`).join('\n');
     const base = window.rossiHwp.create(content, generatedTitle);
     if (base.length > target) throw new Error(`선택한 용량이 HWP 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
-    return concat([base, new Uint8Array(target - base.length)]);
+    return new Blob([base, ...(await padParts(target - base.length, 0, target))], { type: 'application/x-hwp' });
   };
 
   const utf16le = (value) => {
@@ -624,7 +759,7 @@
     nameField.set(nameBytes.subarray(0, 64));
     return concat([nameField, u16(Math.min(nameBytes.length, 64)), Uint8Array.of(type, 1), u32(0xffffffff), u32(0xffffffff), u32(child), new Uint8Array(16), u32(0), new Uint8Array(8), new Uint8Array(8), u32(startSector), u64(size)]);
   };
-  const cfbWorkbook = (workbook, target) => {
+  const cfbWorkbook = async (workbook, target) => {
     const endOfChain = 0xfffffffe;
     const freeSector = 0xffffffff;
     const availableSectors = Math.floor((target - 512) / 512);
@@ -633,8 +768,6 @@
     const workbookSectors = availableSectors - 1 - fatSectors - difatSectors;
     const requestedStream = workbookSectors * 512;
     if (requestedStream < Math.max(4096, workbook.length)) throw new Error(`선택한 용량이 XLS 최소 크기(${formatBytes(512 + (Math.ceil(Math.max(4096, workbook.length) / 512) + 2) * 512)})보다 작습니다.`);
-    const stream = new Uint8Array(requestedStream);
-    stream.set(workbook);
     const directorySector = workbookSectors;
     const firstFatSector = workbookSectors + 1;
     const firstDifatSector = firstFatSector + fatSectors;
@@ -663,18 +796,20 @@
       sector.set(u32(sectorIndex + 1 < difatSectors ? firstDifatSector + sectorIndex + 1 : endOfChain), 127 * 4);
       return sector;
     });
-    const cfb = concat([header, stream, directory, ...fats, ...difats]);
-    if (cfb.length > target) throw new Error(`선택한 용량이 XLS 최소 크기(${formatBytes(cfb.length)})보다 작습니다.`);
-    return concat([cfb, new Uint8Array(target - cfb.length)]);
+    const cfbLength = 512 + requestedStream + 512 + fats.length * 512 + difats.length * 512;
+    if (cfbLength > target) throw new Error(`선택한 용량이 XLS 최소 크기(${formatBytes(cfbLength)})보다 작습니다.`);
+    const streamPadding = await padParts(requestedStream - workbook.length, 0, target);
+    const trailing = await padParts(target - cfbLength, 0, target);
+    return new Blob([header, workbook, ...streamPadding, directory, ...fats, ...difats, ...trailing], { type: 'application/vnd.ms-excel' });
   };
   const makePpt = async (target) => {
-    const response = await fetch('/static/vendor/ppt-template.ppt?v=1', { cache: 'force-cache' });
+    const response = await fetch('/static/vendor/ppt-template.ppt?v=1', { cache: 'force-cache', signal: activeJob?.controller?.signal });
     if (!response.ok) throw new Error('PPT 원본 템플릿을 불러오지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.');
     const base = new Uint8Array(await response.arrayBuffer());
     if (base.length > target) throw new Error(`선택한 용량이 PPT 최소 크기(${formatBytes(base.length)})보다 작습니다.`);
-    return concat([base, new Uint8Array(target - base.length)]);
+    return new Blob([base, ...(await padParts(target - base.length, 0, target))], { type: 'application/vnd.ms-powerpoint' });
   };
-  const makeXls = (target, pattern, generatedTitle) => {
+  const makeXls = async (target, pattern, generatedTitle) => {
     const records = [];
     const globalBof = concat([u16(0x0600), u16(0x0005), u16(0x0dbb), u16(0x07cc), u32(0x00000041), u32(0x00000006)]);
     records.push(biffRecord(0x0809, globalBof));
@@ -691,14 +826,67 @@
   };
 
   const csvCell = (value) => `"${String(value).replace(/"/g, '""')}"`;
-  const makeCsv = (target, pattern, generatedTitle) => {
+  const makeCsv = async (target, pattern, generatedTitle) => {
     const rows = [['generated_title', 'category', 'value'], [generatedTitle, pattern.title, pattern.subtitle], ...pattern.rows];
     const prefix = `\ufeff${rows.map((row) => row.map(csvCell).join(',')).join('\r\n')}\r\n"padding" ,"`;
     const prefixBytes = encoder.encode(prefix).length;
     const ending = '"\r\n';
     const paddingLength = target - prefixBytes - encoder.encode(ending).length;
     if (paddingLength < 0) throw new Error(`선택한 용량이 CSV 최소 크기(${formatBytes(prefixBytes + encoder.encode(ending).length)})보다 작습니다.`);
-    return encoder.encode(`${prefix}${'x'.repeat(paddingLength)}${ending}`);
+    return new Blob([encoder.encode(prefix), ...(await padParts(paddingLength, 120, target)), encoder.encode(ending)], { type: 'text/csv;charset=utf-8' });
+  };
+
+  const waitForRecording = async (durationSeconds, startedAt, label, isAborted = () => false) => {
+    const job = activeJob;
+    const totalMilliseconds = durationSeconds * 1000;
+    for (;;) {
+      checkCancelled();
+      if (isAborted()) return;
+      const elapsedMilliseconds = performance.now() - startedAt;
+      if (elapsedMilliseconds >= totalMilliseconds) return;
+      if (activeJob === job) report(`${label} ${formatDuration(Math.floor(elapsedMilliseconds / 1000))} / ${formatDuration(durationSeconds)}`);
+      await sleep(Math.min(1000, Math.max(50, totalMilliseconds - elapsedMilliseconds)));
+    }
+  };
+
+  const runRecorder = async ({ recorder, stopped, job, durationSeconds, label, beforeStart, afterStart }) => {
+    const stopRecording = () => {
+      try { if (recorder.state !== 'inactive') recorder.stop(); } catch (_) { /* The recorder may already be stopping. */ }
+    };
+    const awaitStop = () => Promise.race([stopped.catch(() => {}), sleep(3000)]);
+    if (job) job.onCancel = stopRecording;
+    stopped.catch(() => {}); // 녹화 오류가 미처리 Promise 거부로 남지 않도록 한다.
+    let started = false;
+    try {
+      await beforeStart();
+      recorder.start(1000);
+      started = true;
+      afterStart();
+      const startedAt = performance.now();
+      let stoppedEarly = false;
+      const waiter = { aborted: false };
+      try {
+        await Promise.race([
+          waitForRecording(durationSeconds, startedAt, label, () => waiter.aborted),
+          stopped.then(() => { stoppedEarly = true; }),
+        ]);
+      } finally {
+        waiter.aborted = true;
+      }
+      if (stoppedEarly && !job?.cancelled && performance.now() - startedAt < durationSeconds * 1000) {
+        throw new Error('녹화가 예상 시간 전에 종료되었습니다. 다시 시도해 주세요.');
+      }
+      stopRecording();
+      await awaitStop();
+    } catch (error) {
+      if (started) {
+        stopRecording();
+        await awaitStop();
+      }
+      throw error;
+    } finally {
+      if (job && job.onCancel === stopRecording) job.onCancel = null;
+    }
   };
 
   const makeWebm = async (target) => {
@@ -726,27 +914,33 @@
       context.fillStyle = '#a6aca1'; context.font = '500 16px ui-monospace, monospace'; context.fillText(`FRAME ${String(frame).padStart(3, '0')}`, 42, 205);
       context.fillStyle = frame % 2 ? '#ff8c78' : '#d7ff5f'; context.fillRect(42 + (frame % 12) * 42, 252, 30, 30);
     };
-    const stream = canvas.captureStream(12);
     const mimeType = ['video/webm;codecs=vp8', 'video/webm'].find((type) => MediaRecorder.isTypeSupported(type));
     if (!mimeType) throw new Error('이 브라우저에서 지원하는 WebM 코덱을 찾지 못했습니다. Chrome 또는 Edge를 사용해 주세요.');
     const durationSeconds = webmDurationForTarget(target);
-    const options = { mimeType, videoBitsPerSecond: webmBitrate };
     const chunks = [];
-    const recorder = new MediaRecorder(stream, options);
-    const stopped = new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = () => reject(new Error('WebM 동영상 생성에 실패했습니다.')); });
-    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    recorder.start(1000);
-    let frame = 0;
-    drawFrame(frame);
-    const frameTimer = window.setInterval(() => drawFrame(++frame), 80);
-    await new Promise((resolve) => window.setTimeout(resolve, durationSeconds * 1000));
-    window.clearInterval(frameTimer);
-    recorder.stop();
-    await stopped;
-    stream.getTracks().forEach((track) => track.stop());
+    const stream = canvas.captureStream(12);
+    let frameTimer = 0;
+    const stopResources = () => {
+      window.clearInterval(frameTimer);
+      stream.getTracks().forEach((track) => track.stop());
+    };
+    try {
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: webmBitrate });
+      const stopped = new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = () => reject(new Error('WebM 동영상 생성에 실패했습니다.')); });
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      let frame = 0;
+      await runRecorder({
+        recorder, stopped, job: activeJob, durationSeconds, label: '영상 녹화 중…',
+        beforeStart: () => { drawFrame(frame); },
+        afterStart: () => { frameTimer = window.setInterval(() => drawFrame(++frame), 80); },
+      });
+    } finally {
+      stopResources();
+    }
+    checkCancelled();
     // Upload validators commonly accept the registered WebM MIME type only;
     // keep codec selection for recording but save the downloaded file as video/webm.
-    return { blob: new Blob(chunks, { type: 'video/webm' }), durationSeconds };
+    return new Blob(chunks, { type: 'video/webm' });
   };
 
   const mp4SoundPatterns = ['440Hz 기준음', '880Hz 고음', '짧은 알림음', '긴 간격 비프음', '이중 화음', '상승 스윕', '교대 음계', '3음 아르페지오', '핑크 노이즈', '메트로놈'];
@@ -803,48 +997,50 @@
     };
 
     const audioContext = new AudioContext({ sampleRate: 44100 });
-    const audioDestination = audioContext.createMediaStreamDestination();
-    const audioBuffer = audioContext.createBuffer(1, audioContext.sampleRate * durationSeconds, audioContext.sampleRate);
-    fillSoundBuffer(audioBuffer.getChannelData(0), audioContext.sampleRate, patternIndex);
-    const audioSource = audioContext.createBufferSource();
-    audioSource.buffer = audioBuffer;
-    audioSource.connect(audioDestination);
-    const canvasStream = canvas.captureStream(12);
-    const stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
     const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 300_000, audioBitsPerSecond: 48_000 });
-    const stopped = new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = () => reject(new Error('MP4 동영상 녹화에 실패했습니다.')); });
-    recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
-    drawFrame(0);
-    await audioContext.resume();
-    recorder.start(1000);
-    audioSource.start();
-    let frame = 0;
-    const frameTimer = window.setInterval(() => drawFrame(++frame), 80);
-    await new Promise((resolve) => window.setTimeout(resolve, durationSeconds * 1000));
-    window.clearInterval(frameTimer);
-    recorder.stop();
-    await stopped;
-    stream.getTracks().forEach((track) => track.stop());
-    await audioContext.close();
+    let frameTimer = 0;
+    let stopResources = () => {};
+    try {
+      const audioDestination = audioContext.createMediaStreamDestination();
+      const audioBuffer = audioContext.createBuffer(1, audioContext.sampleRate * durationSeconds, audioContext.sampleRate);
+      fillSoundBuffer(audioBuffer.getChannelData(0), audioContext.sampleRate, patternIndex);
+      const audioSource = audioContext.createBufferSource();
+      audioSource.buffer = audioBuffer;
+      audioSource.connect(audioDestination);
+      const canvasStream = canvas.captureStream(12);
+      const stream = new MediaStream([...canvasStream.getVideoTracks(), ...audioDestination.stream.getAudioTracks()]);
+      stopResources = () => {
+        window.clearInterval(frameTimer);
+        try { audioSource.stop(); } catch (_) { /* The source may not have started yet. */ }
+        stream.getTracks().forEach((track) => track.stop());
+      };
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 300_000, audioBitsPerSecond: 48_000 });
+      const stopped = new Promise((resolve, reject) => { recorder.onstop = resolve; recorder.onerror = () => reject(new Error('MP4 동영상 녹화에 실패했습니다.')); });
+      recorder.ondataavailable = (event) => { if (event.data.size) chunks.push(event.data); };
+      await runRecorder({
+        recorder, stopped, job: activeJob, durationSeconds, label: '영상 녹화 중…',
+        beforeStart: async () => { drawFrame(0); await audioContext.resume(); },
+        afterStart: () => {
+          audioSource.start();
+          let frame = 0;
+          frameTimer = window.setInterval(() => drawFrame(++frame), 80);
+        },
+      });
+    } finally {
+      stopResources();
+      await audioContext.close().catch(() => {});
+    }
+    checkCancelled();
     const output = new Uint8Array(await new Blob(chunks, { type: 'video/mp4' }).arrayBuffer());
     if (output.length === 0 || output.length + 8 > target) throw new Error('동적 MP4가 목표 용량보다 큽니다.');
     return output;
   };
 
-  const paddedMp4 = (template, target) => {
+  const paddedMp4 = async (template, target) => {
     if (target < template.length + 8) throw new Error(`선택한 용량이 MP4 최소 크기(${formatBytes(template.length + 8)})보다 작습니다.`);
     const freeBoxSize = target - template.length;
     const header = concat([be32(freeBoxSize), ascii('free')]);
-    const zeroChunk = new Uint8Array(Math.min(1024 * 1024, freeBoxSize - 8));
-    const parts = [template, header];
-    let remaining = freeBoxSize - 8;
-    while (remaining > 0) {
-      const length = Math.min(remaining, zeroChunk.length);
-      parts.push(length === zeroChunk.length ? zeroChunk : zeroChunk.subarray(0, length));
-      remaining -= length;
-    }
-    return new Blob(parts, { type: 'video/mp4' });
+    return new Blob([template, header, ...(await padParts(freeBoxSize - 8, 0, target))], { type: 'video/mp4' });
   };
 
   const makeMp4 = async (target, patternIndex, title) => {
@@ -856,19 +1052,21 @@
       // the requested size cannot silently switch back to a static template.
       for (const mimeType of [...mimeTypes, ...mimeTypes]) {
         try {
+          checkCancelled();
           const recorded = await recordMp4(target, patternIndex, title, mimeType);
-          return { blob: paddedMp4(recorded, target), durationSeconds: 6, patternName: mp4SoundPatterns[patternIndex], title, dynamicTitle: true };
+          return { blob: await paddedMp4(recorded, target), durationSeconds: 6, patternName: mp4SoundPatterns[patternIndex], title, dynamicTitle: true };
         } catch (error) {
+          if (error?.name === 'AbortError') throw error;
           lastError = error;
-          await new Promise((resolve) => window.setTimeout(resolve, 150));
+          await sleep(150);
         }
       }
       throw new Error(`동적 MP4 녹화에 실패했습니다. 브라우저를 새로고침한 뒤 다시 시도해 주세요.${lastError instanceof Error ? ` (${lastError.message})` : ''}`);
     }
-    const response = await fetch(`/static/test-video-${patternIndex + 1}.mp4?v=1`, { cache: 'no-cache' });
+    const response = await fetch(`/static/test-video-${patternIndex + 1}.mp4?v=1`, { cache: 'no-cache', signal: activeJob?.controller?.signal });
     if (!response.ok) throw new Error('MP4 원본 영상을 불러오지 못했습니다. 다시 시도해 주세요.');
     const template = new Uint8Array(await response.arrayBuffer());
-    return { blob: paddedMp4(template, target), durationSeconds: 6, patternName: mp4SoundPatterns[patternIndex], title, dynamicTitle: false };
+    return { blob: await paddedMp4(template, target), durationSeconds: 6, patternName: mp4SoundPatterns[patternIndex], title, dynamicTitle: false };
   };
 
   const targetBytes = () => {
@@ -878,7 +1076,7 @@
     const multiplier = unitBytes[fileUnit.value];
     if (!multiplier) throw new Error('지원하는 용량 단위를 선택해 주세요.');
     const bytes = Math.round(size * multiplier);
-    if (bytes > maxBytes) throw new Error(`한 번에 최대 ${formatBytes(maxBytes)}까지만 만들 수 있습니다.`);
+    if (bytes > MAX_BYTES) throw new Error(`한 번에 최대 ${formatBytes(MAX_BYTES)}까지만 만들 수 있습니다.`);
     return bytes;
   };
 
@@ -886,13 +1084,13 @@
     const isImage = ['png', 'jpg', 'gif', 'psd', 'tif'].includes(fileKind.value);
     const isVideo = fileKind.value === 'webm' || fileKind.value === 'mp4';
     imageOption.hidden = !isImage;
-    fileSize.max = String(Math.floor(maxBytes * 10 / unitBytes[fileUnit.value]) / 10);
+    fileSize.max = String(Math.floor(MAX_BYTES * 10 / unitBytes[fileUnit.value]) / 10);
     fileHint.textContent = fileKind.value === 'mp4'
       ? '지원 브라우저에서는 생성 날짜·시간(KST)을 화면 제목으로 직접 녹화하고, 10가지 테스트 사운드 중 하나를 무작위로 넣습니다.'
       : fileKind.value === 'ppt'
       ? 'PPT는 Microsoft PowerPoint에서 만든 호환 템플릿을 바탕으로 요청한 용량에 맞춰 생성합니다.'
       : isVideo
-      ? '모바일 호환을 위해 실제 WebM을 녹화합니다. 목표 용량에 맞춰 영상 길이를 자동으로 정합니다. 실제 파일 크기는 목표에 가깝게 생성됩니다.'
+       ? '모바일 호환을 위해 실제 WebM을 녹화합니다. 목표 용량에 맞춰 영상 길이를 자동으로 정합니다. 1GiB 기준 예상 녹화 시간은 약 11분 56초이며 실제 파일 크기는 목표에 가깝게 생성됩니다.'
       : 'PNG, JPG, GIF, PSD, TIF, TXT, PDF, DOC, DOCX, XLS, XLSX, CSV, PPT, PPTX, HWP, HWPX는 생성 날짜·시간(KST)을 제목으로 넣고, 파일명별로 중복 없는 10가지 테스트 패턴으로 만듭니다.';
   };
 
@@ -907,16 +1105,25 @@
 
   fileForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (activeJob) return;
+    const job = {
+      cancelled: false,
+      controller: new AbortController(),
+      onCancel: null,
+      onProgress: (text) => { if (activeJob === job) setStatus(fileStatus, text); },
+    };
+    activeJob = job;
+    const controls = Array.from(fileForm.querySelectorAll('input, select, button'));
+    controls.forEach((control) => { control.disabled = true; });
+    fileCancel.disabled = false;
     try {
       const target = targetBytes();
       const kind = fileKind.value;
-      const button = fileForm.querySelector('button[type="submit"]');
-      button.disabled = true;
       setStatus(fileStatus, kind === 'webm'
-        ? `WebM을 실제 녹화 중입니다… 예상 길이 ${formatDuration(webmDurationForTarget(target))}`
+        ? `영상 녹화 준비… 예상 길이 ${formatDuration(webmDurationForTarget(target))}`
         : kind === 'mp4'
-          ? 'MP4를 생성하고 있습니다… 동적 녹화 지원 시 약 6초가 걸립니다.'
-          : '파일을 생성하고 있습니다…');
+          ? '영상 녹화 준비… 동적 녹화 지원 시 약 6초가 걸립니다.'
+          : '생성 중… 0%');
       let data;
       let videoDurationSeconds;
       let generatedPatternName;
@@ -928,20 +1135,20 @@
       const generatedTitle = generatedKstTitle();
       if (kind === 'png') { data = await makePng(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'jpg') { data = await makeJpeg(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'gif') { data = makeGif(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'psd') { data = makePsd(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'tif') { data = makeTiff(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'txt') { data = makeText(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'pdf') { data = makePdf(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'doc') { data = makeDoc(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'docx') { data = makeDocx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'xlsx') { data = makeXlsx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'xls') { data = makeXls(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'csv') { data = makeCsv(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'gif') { data = await makeGif(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'psd') { data = await makePsd(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'tif') { data = await makeTiff(target, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'txt') { data = await makeText(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'pdf') { data = await makePdf(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'doc') { data = await makeDoc(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'docx') { data = await makeDocx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'xlsx') { data = await makeXlsx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'xls') { data = await makeXls(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'csv') { data = await makeCsv(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'ppt') { data = await makePpt(target); generatedPatternName = 'PowerPoint 호환 템플릿'; }
-      else if (kind === 'pptx') { data = makePptx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'hwp') { data = makeHwp(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
-      else if (kind === 'hwpx') { data = makeHwpx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'pptx') { data = await makePptx(target, pattern, patternIndex, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'hwp') { data = await makeHwp(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
+      else if (kind === 'hwpx') { data = await makeHwpx(target, pattern, generatedTitle); generatedPatternName = pattern.name; }
       else if (kind === 'mp4') {
         const mp4 = await makeMp4(target, patternIndex, generatedTitle);
         data = mp4.blob;
@@ -951,27 +1158,42 @@
         hasDynamicVideoTitle = mp4.dynamicTitle;
       }
       else {
-        const webm = await makeWebm(target);
-        data = webm.blob;
-        videoDurationSeconds = webm.durationSeconds;
+        data = await makeWebm(target);
+        videoDurationSeconds = webmDurationForTarget(target);
       }
-      const dataLength = data instanceof Blob ? data.size : data.length;
+      checkCancelled();
+      const dataLength = data.size;
       if (kind !== 'webm' && dataLength !== target) throw new Error(`목표 용량과 다릅니다 (${dataLength.toLocaleString('ko-KR')} bytes).`);
-      const mime = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', psd: 'image/vnd.adobe.photoshop', tif: 'image/tiff', txt: 'text/plain;charset=utf-8', pdf: 'application/pdf', doc: 'application/msword', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', xls: 'application/vnd.ms-excel', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', csv: 'text/csv;charset=utf-8', ppt: 'application/vnd.ms-powerpoint', pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', hwp: 'application/x-hwp', hwpx: 'application/vnd.hancom.hwpx', webm: 'video/webm', mp4: 'video/mp4' }[kind];
-      download(data instanceof Blob ? data : new Blob([data], { type: mime }), `${safeName(fileName.value, 'test-file')}.${kind}`);
-      setStatus(fileStatus, kind === 'webm'
-        ? `WebM 영상 ${formatBytes(data.size)}을 만들었습니다. 자동 지정 길이: ${formatDuration(videoDurationSeconds)} · 목표: ${formatBytes(target)}`
+      checkCancelled();
+      download(data, `${safeName(fileName.value, 'test-file')}.${kind}`);
+      if (activeJob === job) setStatus(fileStatus, kind === 'webm'
+        ? `다운로드 요청: WebM 영상 ${formatBytes(dataLength)} · 자동 지정 길이: ${formatDuration(videoDurationSeconds)} · 목표: ${formatBytes(target)}`
         : kind === 'mp4'
-          ? `H.264/AAC MP4 영상 ${formatBytes(data.size)}을 만들었습니다. 사운드: ${generatedPatternName} · ${hasDynamicVideoTitle ? `화면 제목: ${generatedVideoTitle}` : '이 브라우저는 동적 MP4 제목을 지원하지 않아 기본 영상을 사용했습니다.'} · 길이: ${formatDuration(videoDurationSeconds)}`
+          ? `다운로드 요청: H.264/AAC MP4 영상 ${formatBytes(dataLength)} · 사운드: ${generatedPatternName} · ${hasDynamicVideoTitle ? `화면 제목: ${generatedVideoTitle}` : '이 브라우저는 동적 MP4 제목을 지원하지 않아 기본 영상을 사용했습니다.'} · 길이: ${formatDuration(videoDurationSeconds)}`
         : kind === 'ppt'
-          ? `PPT 파일 ${formatBytes(data.length)}을 만들었습니다. 원본: ${generatedPatternName} · 요청 용량에 맞춘 비표시 패딩 포함`
-          : `${kind.toUpperCase()} 파일 ${formatBytes(data.length)}을 만들었습니다. 생성 제목: ${generatedTitle} · 패턴: ${generatedPatternName} (파일명별 중복 없는 랜덤 10종)`);
-      button.disabled = false;
+          ? `다운로드 요청: PPT 파일 ${formatBytes(dataLength)} · 원본: ${generatedPatternName} · 요청 용량에 맞춘 비표시 패딩 포함`
+          : `다운로드 요청: ${kind.toUpperCase()} 파일 ${formatBytes(dataLength)} · 생성 제목: ${generatedTitle} · 패턴: ${generatedPatternName} (파일명별 중복 없는 랜덤 10종)`);
     } catch (error) {
-      setStatus(fileStatus, error instanceof Error ? error.message : '파일을 생성하지 못했습니다.', true);
-      const button = fileForm.querySelector('button[type="submit"]');
-      button.disabled = false;
+      if (activeJob === job) setStatus(fileStatus, error?.name === 'AbortError'
+        ? '취소: 생성을 중단했습니다. 바로 다시 시도할 수 있습니다.'
+        : `실패: ${error instanceof Error ? error.message : '파일을 생성하지 못했습니다.'}`, error?.name !== 'AbortError');
+    } finally {
+      if (activeJob === job) {
+        activeJob = null;
+        controls.forEach((control) => { control.disabled = false; });
+        fileCancel.disabled = true;
+        updateFileOptions();
+      }
     }
+  });
+
+  fileCancel.addEventListener('click', () => {
+    const job = activeJob;
+    if (!job) return;
+    job.cancelled = true;
+    job.controller.abort();
+    if (typeof job.onCancel === 'function') job.onCancel();
+    setStatus(fileStatus, '취소 요청: 진행 중인 작업을 멈추고 있습니다…');
   });
 
   const graphemeSegmenter = typeof Intl.Segmenter === 'function'

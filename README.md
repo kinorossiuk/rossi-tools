@@ -44,7 +44,10 @@ PHP 웹호스팅에서 실행되며 QA 실무를 위해 직접 개발한 개인 
 
 `/tools/test-data/`에서 테스트 업로드용 파일과 데이터 경계값을 만듭니다.
 
-- PNG, JPG, GIF, PSD, TIF, TXT, PDF, DOC, DOCX, XLS, XLSX, CSV, PPT, PPTX, HWP, HWPX, MP4, WebM을 최대 300 MiB 목표 크기로 생성
+- PNG, JPG, GIF, PSD, TIF, TXT, PDF, DOC, DOCX, XLS, XLSX, CSV, PPT, PPTX, HWP, HWPX, MP4, WebM을 최대 1GiB 목표 크기로 생성 (KB·KiB·MB·MiB·GB·GiB 단위, 소수점 한 자리)
+- GB는 1,000,000,000 bytes, GiB는 1,073,741,824 bytes로 계산하며, 1.1 GB·1.1 GiB처럼 상한을 넘는 입력은 거부
+- 생성 중에는 설정을 잠그고 취소할 수 있으며, 다운로드 링크 실행 후에는 "다운로드를 요청했습니다"로 안내
+- 대용량 패딩은 1MiB 청크로 구성하고, 패딩·CRC 계산은 8MiB마다 화면 응답과 취소를 확인
 - PNG·JPG·GIF·PSD·TIF, TXT·PDF·DOC·DOCX, XLS·XLSX·CSV, PPTX, HWP·HWPX는 생성 날짜·시간(KST)을 제목으로 넣고, 같은 파일명에서 10가지 콘텐츠·레이아웃 패턴을 중복 없이 한 번씩 무작위 선택
 - 레거시 PPT는 Microsoft PowerPoint로 작성된 CC0 호환 템플릿을 사용하며, 요청한 정확한 용량에 맞춘 비표시 패딩을 포함
 - MP4는 생성 날짜·시간(KST)을 화면 제목으로 녹화하고 10가지 합성 테스트 사운드 중 하나를 포함해 생성

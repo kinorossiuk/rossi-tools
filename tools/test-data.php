@@ -47,9 +47,9 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
         </select>
       </label>
       <label>목표 용량
-        <div class="size-input"><input id="file-size" name="size" type="number" min="0.1" max="300" step="0.1" value="1" required inputmode="decimal" aria-describedby="file-size-help"><select id="file-unit" name="unit" aria-label="용량 단위"><option value="MiB">MiB</option><option value="MB">MB</option><option value="KiB">KiB</option><option value="KB">KB</option></select></div>
+        <div class="size-input"><input id="file-size" name="size" type="number" min="0.1" max="1024" step="0.1" value="1" required inputmode="decimal" aria-describedby="file-size-help"><select id="file-unit" name="unit" aria-label="용량 단위"><option value="MiB">MiB</option><option value="MB">MB</option><option value="KiB">KiB</option><option value="KB">KB</option><option value="GB">GB</option><option value="GiB">GiB</option></select></div>
       </label>
-      <p class="test-hint" id="file-size-help">소수점 한 자리까지 입력할 수 있습니다 (예: 27.7 KB = 27,700 bytes). 1 KB = 1,000 bytes · 1 KiB = 1,024 bytes이며 소수 바이트는 반올림합니다. 파일 형식과 이미지 크기에 따라 생성 가능한 최소 용량이 다릅니다.</p>
+      <p class="test-hint" id="file-size-help">최대 1GiB까지 만들 수 있습니다. GB는 1,000,000,000 bytes, GiB는 1,073,741,824 bytes입니다. 소수점 한 자리까지 입력할 수 있으며 소수 바이트는 반올림합니다. 브라우저 자원에 따라 생성이 실패할 수 있습니다.</p>
       <label>파일명
         <input id="file-name" name="name" maxlength="60" value="test-file" required>
       </label>
@@ -57,8 +57,8 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
         <select id="image-dimension" name="dimension"><option value="800x600">800 × 600</option><option value="1280x720">1280 × 720</option><option value="1920x1080">1920 × 1080</option></select>
       </label>
       <p class="test-hint" id="file-hint">이미지, 문서, 스프레드시트와 프레젠테이션은 10가지 패턴 중 하나를 무작위로 선택해 목표 바이트에 맞춰 생성합니다.</p>
-      <button class="primary" type="submit">파일 생성 및 다운로드</button>
-      <p class="test-status" id="file-status" role="status" aria-live="polite">모든 파일은 최대 300 MiB까지 만들 수 있습니다. 큰 파일은 충분한 브라우저 메모리가 필요합니다.</p>
+      <div class="test-actions wide-field"><button class="primary" type="submit">파일 생성 및 다운로드</button><button class="ghost" id="file-cancel" type="button" disabled>생성 취소</button></div>
+      <p class="test-status" id="file-status" role="status" aria-live="polite">준비: 모든 파일은 최대 1GiB까지 만들 수 있습니다. 큰 파일은 충분한 브라우저 자원과 시간이 필요합니다.</p>
     </form>
   </section>
 
