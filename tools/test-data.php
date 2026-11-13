@@ -150,11 +150,11 @@ $testDataJsVersion = (string) (filemtime(__DIR__ . '/../static/test-data.js') ?:
       </label>
       <label>이미지 형식 <input value="512 × 512 JPG" readonly aria-readonly="true"></label>
       <div class="portrait-summary wide-field" id="portrait-summary" aria-live="polite"></div>
-      <p class="test-hint wide-field">같은 인물은 얼굴 특징을 유지하고 표정·옷·배경만 달리합니다. ZIP에는 무작위 파일명의 JPG만 넣고, 정답 그룹은 이 브라우저에서만 확인합니다.</p>
+      <p class="test-hint wide-field">AI로 만든 실사 가상 인물 20명을 기본 제공합니다. 인물별 원본 한 장의 밝기·확대·위치를 조금씩 달리하며, 다시 생성해도 같은 인물을 재사용합니다. ZIP에는 무작위 파일명의 JPG만 넣고, 정답 그룹은 이 브라우저에서만 확인합니다.</p>
       <div class="portrait-preview wide-field" id="portrait-preview" aria-live="polite"><p>아직 생성한 인물 사진이 없습니다.</p></div>
       <div class="test-actions wide-field"><button class="primary" id="portrait-generate" type="submit">인물 사진 만들기</button><button class="ghost" id="portrait-cancel" type="button" disabled>생성 취소</button><button class="ghost" id="portrait-download" type="button" disabled>JPG ZIP 다운로드</button><button class="ghost" id="portrait-groups" type="button" disabled>정답 그룹 보기</button><button class="ghost" id="portrait-reset" type="button">인물 생성 이력 초기화</button></div>
       <section class="portrait-groups wide-field" id="portrait-groups-output" hidden aria-labelledby="portrait-groups-title"><h2 id="portrait-groups-title">정답 그룹</h2><div id="portrait-groups-list"></div></section>
-      <p class="test-status" id="portrait-status" role="status" aria-live="polite">샘플 15장으로 카나나의 같은 인물 묶기 결과를 먼저 확인하세요.</p>
+      <p class="test-status" id="portrait-status" role="status" aria-live="polite">샘플 15장으로 얼굴 검출부터 확인하세요. 같은 원본의 변형 사진이므로 별도 촬영 사진의 인물 그룹화 정확도를 평가하는 자료는 아닙니다.</p>
     </form>
   </section>
 </section>
